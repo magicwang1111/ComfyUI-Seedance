@@ -2,5 +2,6 @@
   "api_key": "",
   "base_url": "https://aihubmix.com",
   "poll_interval": 15.0,
-  "request_timeout": 60
+  "request_timeout": 60,
+  "upload_timeout": 120
 }

@@ -1,4 +1,5 @@
 from .client import Client, VideoAPIError
+from .upload import DEFAULT_UPLOAD_TIMEOUT, upload_file_to_tmpfiles
 from .video import (
     DURATION_OPTIONS,
     MODEL_OPTIONS,
@@ -17,6 +18,7 @@ from .video import (
 
 __all__ = [
     "Client",
+    "DEFAULT_UPLOAD_TIMEOUT",
     "DURATION_OPTIONS",
     "MODEL_OPTIONS",
     "NODE_DURATION_OPTIONS",
@@ -30,5 +32,6 @@ __all__ = [
     "extract_result_video_url",
     "extract_task_id",
     "submit_video_generation",
+    "upload_file_to_tmpfiles",
     "wait_for_video_completion",
 ]

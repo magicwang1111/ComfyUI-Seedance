@@ -32,9 +32,11 @@ It exposes three nodes under the `ComfyUI-Seedance` category:
 - The backend payload builder still understands `-1` as model-auto duration for direct API use.
 - `ratio` is limited to `adaptive`, `16:9`, `9:16`, `1:1`, `4:3`, `3:4`, and `21:9`.
 - `Text-to-Video` is pure text only.
-- `Multimodal-to-Video` can mix up to `9` public image URLs, `3` public video URLs, and `3` public audio URLs in one request.
+- `Multimodal-to-Video` can mix up to `9` local images, `3` local videos, and `3` local audios in one request.
 - `Multimodal-to-Video` requires at least one reference input.
-- Image, video, and audio references all require public `http/https` URLs.
+- The node uploads local references to `tmpfiles.org` behind the scenes, then sends the temporary public URLs to Seedance.
+- `tmpfiles.org` files expire after 60 minutes and the upload limit is 100 MB per file.
+- The temporary URLs are not exposed in the node UI.
 - Seedance control fields are sent inside `extra_body` to match the public AIHubMix example structure more closely.
 
 ## Configuration
@@ -46,7 +48,8 @@ Create [config.local.json](./config.local.json) in the repository root. Use [con
   "api_key": "",
   "base_url": "https://aihubmix.com",
   "poll_interval": 15.0,
-  "request_timeout": 60
+  "request_timeout": 60,
+  "upload_timeout": 120
 }
 ```
 
@@ -56,10 +59,12 @@ Supported environment variables:
 - `SEEDANCE_BASE_URL`
 - `SEEDANCE_POLL_INTERVAL`
 - `SEEDANCE_REQUEST_TIMEOUT`
+- `SEEDANCE_UPLOAD_TIMEOUT`
 - `AIHUBMIX_API_KEY`
 - `AIHUBMIX_BASE_URL`
 - `AIHUBMIX_POLL_INTERVAL`
 - `AIHUBMIX_REQUEST_TIMEOUT`
+- `AIHUBMIX_UPLOAD_TIMEOUT`
 
 Priority:
 
@@ -114,9 +119,9 @@ Inputs:
 - `ratio`
 - `generate_audio`
 - `watermark`
-- Optional `image_url_1` through `image_url_9`
-- Optional `video_url_1` through `video_url_3`
-- Optional `audio_url_1` through `audio_url_3`
+- Optional `image_1` through `image_9` as ComfyUI `IMAGE`
+- Optional `video_1` through `video_3` as ComfyUI `VIDEO`
+- Optional `audio_1` through `audio_3` as ComfyUI `AUDIO`
 
 Outputs:
 
@@ -158,3 +163,4 @@ See [examples/README.md](./examples/README.md) for a quick description of each o
 
 - [AIHubMix Video Gen documentation (CN)](https://docs.aihubmix.com/cn/api/Video-Gen)
 - [AIHubMix model list](https://aihubmix.com/models)
+- [tmpfiles API](https://tmpfiles.org/api)

@@ -1,13 +1,18 @@
 import json
 import os
+import tempfile
 import urllib.parse
+from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
 
 import folder_paths
+import numpy
+import PIL.Image
 
 from .api import (
     Client,
+    DEFAULT_UPLOAD_TIMEOUT,
     MODEL_OPTIONS,
     NODE_DURATION_OPTIONS,
     RATIO_OPTIONS,
@@ -20,6 +25,7 @@ from .api import (
     extract_result_video_url,
     extract_task_id,
     submit_video_generation,
+    upload_file_to_tmpfiles,
     wait_for_video_completion,
 )
 
@@ -32,6 +38,7 @@ DEFAULT_FILENAME_PREFIX = NODE_PREFIX
 DEFAULT_BASE_URL = "https://aihubmix.com"
 DEFAULT_POLL_INTERVAL = 15.0
 DEFAULT_REQUEST_TIMEOUT = 60
+DEFAULT_UPLOAD_TIMEOUT_SECONDS = DEFAULT_UPLOAD_TIMEOUT
 
 
 def _load_json_config():
@@ -161,6 +168,17 @@ def _resolve_request_timeout(config_data):
     return DEFAULT_REQUEST_TIMEOUT
 
 
+def _resolve_upload_timeout(config_data):
+    if _json_value_present(config_data, "upload_timeout"):
+        return _parse_request_timeout(config_data["upload_timeout"])
+
+    env_value = _load_env_value("SEEDANCE_UPLOAD_TIMEOUT", "AIHUBMIX_UPLOAD_TIMEOUT")
+    if env_value:
+        return _parse_request_timeout(env_value)
+
+    return DEFAULT_UPLOAD_TIMEOUT_SECONDS
+
+
 def _create_runtime_client():
     config_data = _load_json_config()
     return Client(
@@ -169,6 +187,11 @@ def _create_runtime_client():
         base_url=_resolve_base_url(config_data),
         poll_interval=_resolve_poll_interval(config_data),
     )
+
+
+def _create_upload_timeout():
+    config_data = _load_json_config()
+    return _resolve_upload_timeout(config_data)
 
 
 @contextmanager
@@ -298,32 +321,98 @@ def _multimodal_optional_inputs():
     inputs = {}
 
     for index in range(1, 10):
-        inputs[f"image_url_{index}"] = ("STRING", {"default": ""})
+        inputs[f"image_{index}"] = ("IMAGE",)
 
     for index in range(1, 4):
-        inputs[f"video_url_{index}"] = ("STRING", {"default": ""})
-        inputs[f"audio_url_{index}"] = ("STRING", {"default": ""})
+        inputs[f"video_{index}"] = ("VIDEO",)
+        inputs[f"audio_{index}"] = ("AUDIO",)
 
     return inputs
 
 
-def _collect_reference_content(image_urls, video_urls, audio_urls):
+def _tensor_to_pil_image(image):
+    if image is None:
+        raise ValueError("image is required.")
+
+    if isinstance(image, Iterable) and not hasattr(image, "ndim"):
+        image = next(iter(image), None)
+
+    if image is None:
+        raise ValueError("image is required.")
+
+    if getattr(image, "ndim", None) == 3:
+        image = image.unsqueeze(0)
+
+    np_imgs = numpy.clip(image.cpu().numpy() * 255.0, 0.0, 255.0).astype(numpy.uint8)
+    return PIL.Image.fromarray(np_imgs[0])
+
+
+def _upload_image_reference(image):
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
+        temp_path = handle.name
+
+    try:
+        pil_image = _tensor_to_pil_image(image)
+        pil_image.save(temp_path, format="JPEG")
+        return upload_file_to_tmpfiles(temp_path, timeout=_create_upload_timeout())
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def _upload_video_reference(video):
+    if video is None:
+        raise ValueError("video is required.")
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as handle:
+        temp_path = handle.name
+
+    try:
+        video.save_to(temp_path)
+        return upload_file_to_tmpfiles(temp_path, timeout=_create_upload_timeout())
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def _upload_audio_reference(audio):
+    if audio is None:
+        raise ValueError("audio is required.")
+
+    import torchaudio
+
+    waveform = audio["waveform"].cpu()[0]
+    if waveform.dim() == 1:
+        waveform = waveform.unsqueeze(0)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+        temp_path = handle.name
+
+    try:
+        torchaudio.save(temp_path, waveform, audio["sample_rate"])
+        return upload_file_to_tmpfiles(temp_path, timeout=_create_upload_timeout())
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def _collect_reference_content(images, videos, audios):
     content = []
 
-    for image_url in image_urls:
-        if str(image_url or "").strip():
-            content.append(build_image_reference_payload(image_url))
+    for image in images:
+        if image is not None:
+            content.append(build_image_reference_payload(_upload_image_reference(image)))
 
-    for video_url in video_urls:
-        if str(video_url or "").strip():
-            content.append(build_video_reference_payload(video_url))
+    for video in videos:
+        if video is not None:
+            content.append(build_video_reference_payload(_upload_video_reference(video)))
 
-    for audio_url in audio_urls:
-        if str(audio_url or "").strip():
-            content.append(build_audio_reference_payload(audio_url))
+    for audio in audios:
+        if audio is not None:
+            content.append(build_audio_reference_payload(_upload_audio_reference(audio)))
 
     if not content:
-        raise ValueError("At least one image URL, video URL, or audio URL reference is required.")
+        raise ValueError("At least one image, video, or audio reference is required.")
 
     return content
 
@@ -374,36 +463,36 @@ class SeedanceMultimodalNode:
         ratio,
         generate_audio,
         watermark,
-        image_url_1="",
-        image_url_2="",
-        image_url_3="",
-        image_url_4="",
-        image_url_5="",
-        image_url_6="",
-        image_url_7="",
-        image_url_8="",
-        image_url_9="",
-        video_url_1="",
-        video_url_2="",
-        video_url_3="",
-        audio_url_1="",
-        audio_url_2="",
-        audio_url_3="",
+        image_1=None,
+        image_2=None,
+        image_3=None,
+        image_4=None,
+        image_5=None,
+        image_6=None,
+        image_7=None,
+        image_8=None,
+        image_9=None,
+        video_1=None,
+        video_2=None,
+        video_3=None,
+        audio_1=None,
+        audio_2=None,
+        audio_3=None,
     ):
         content = _collect_reference_content(
             [
-                image_url_1,
-                image_url_2,
-                image_url_3,
-                image_url_4,
-                image_url_5,
-                image_url_6,
-                image_url_7,
-                image_url_8,
-                image_url_9,
+                image_1,
+                image_2,
+                image_3,
+                image_4,
+                image_5,
+                image_6,
+                image_7,
+                image_8,
+                image_9,
             ],
-            [video_url_1, video_url_2, video_url_3],
-            [audio_url_1, audio_url_2, audio_url_3],
+            [video_1, video_2, video_3],
+            [audio_1, audio_2, audio_3],
         )
         return _build_generation_result(
             model,

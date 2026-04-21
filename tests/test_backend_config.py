@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 seedance_package = importlib.import_module("py")
 seedance_nodes = importlib.import_module("py.nodes")
 client_module = importlib.import_module("py.api.client")
+upload_module = importlib.import_module("py.api.upload")
 video_api = importlib.import_module("py.api.video")
 
 
@@ -27,10 +28,12 @@ ENV_KEYS = {
     "SEEDANCE_BASE_URL": "",
     "SEEDANCE_POLL_INTERVAL": "",
     "SEEDANCE_REQUEST_TIMEOUT": "",
+    "SEEDANCE_UPLOAD_TIMEOUT": "",
     "AIHUBMIX_API_KEY": "",
     "AIHUBMIX_BASE_URL": "",
     "AIHUBMIX_POLL_INTERVAL": "",
     "AIHUBMIX_REQUEST_TIMEOUT": "",
+    "AIHUBMIX_UPLOAD_TIMEOUT": "",
 }
 
 
@@ -63,6 +66,15 @@ class FakeVideoClient(FakeResolvedClient):
     def request(self, method, path, **kwargs):
         self.calls.append((method, path, kwargs))
         return self._responses.pop(0)
+
+
+class FakeVideoReference:
+    def __init__(self):
+        self.saved_paths = []
+
+    def save_to(self, path):
+        self.saved_paths.append(path)
+        Path(path).write_bytes(b"video-bytes")
 
 
 class BackendConfigTests(unittest.TestCase):
@@ -103,6 +115,7 @@ class BackendConfigTests(unittest.TestCase):
                         "base_url": "https://json.example.com/v1/",
                         "poll_interval": 12.5,
                         "request_timeout": 90,
+                        "upload_timeout": 140,
                     }
                 ),
                 encoding="utf-8",
@@ -116,11 +129,13 @@ class BackendConfigTests(unittest.TestCase):
                 with mock.patch.object(seedance_nodes, "CONFIG_JSON_PATH", json_path):
                     with mock.patch.object(seedance_nodes, "Client", FakeResolvedClient):
                         client = seedance_nodes._create_runtime_client()
+                        upload_timeout = seedance_nodes._create_upload_timeout()
 
             self.assertEqual(client.api_key, "json-key")
             self.assertEqual(client.timeout, 90)
             self.assertEqual(client.base_url, "https://json.example.com")
             self.assertEqual(client.poll_interval, 12.5)
+            self.assertEqual(upload_timeout, 140)
 
     def test_runtime_client_uses_env_when_json_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -134,17 +149,26 @@ class BackendConfigTests(unittest.TestCase):
                     "SEEDANCE_BASE_URL": "https://env.example.com/v1/",
                     "SEEDANCE_POLL_INTERVAL": "20",
                     "SEEDANCE_REQUEST_TIMEOUT": "75",
+                    "SEEDANCE_UPLOAD_TIMEOUT": "150",
                 },
                 clear=False,
             ):
                 with mock.patch.object(seedance_nodes, "CONFIG_JSON_PATH", json_path):
                     with mock.patch.object(seedance_nodes, "Client", FakeResolvedClient):
                         client = seedance_nodes._create_runtime_client()
+                        upload_timeout = seedance_nodes._create_upload_timeout()
 
             self.assertEqual(client.api_key, "env-key")
             self.assertEqual(client.timeout, 75)
             self.assertEqual(client.base_url, "https://env.example.com")
             self.assertEqual(client.poll_interval, 20.0)
+            self.assertEqual(upload_timeout, 150)
+
+    def test_tmpfiles_url_is_converted_to_direct_download(self):
+        self.assertEqual(
+            upload_module._normalize_tmpfiles_download_url("http://tmpfiles.org/123/example.jpg"),
+            "https://tmpfiles.org/dl/123/example.jpg",
+        )
 
     def test_client_normalizes_base_url(self):
         client = client_module.Client("test-key", base_url="https://aihubmix.com/v1/")
@@ -310,19 +334,25 @@ class BackendConfigTests(unittest.TestCase):
         def fake_runtime_client():
             yield fake_client
 
+        fake_video = FakeVideoReference()
+        fake_audio = {"waveform": "fake-waveform", "sample_rate": 44100}
+
         with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
-            result = seedance_nodes.SeedanceMultimodalNode().generate(
-                "doubao-seedance-2-0-fast-260128",
-                "Blend the supplied references.",
-                "720p",
-                "5",
-                "adaptive",
-                True,
-                False,
-                image_url_1="https://example.com/ref.jpg",
-                video_url_1="https://example.com/ref.mp4",
-                audio_url_1="https://example.com/ref.mp3",
-            )
+            with mock.patch.object(seedance_nodes, "_upload_image_reference", return_value="https://example.com/ref.jpg"):
+                with mock.patch.object(seedance_nodes, "_upload_video_reference", return_value="https://example.com/ref.mp4"):
+                    with mock.patch.object(seedance_nodes, "_upload_audio_reference", return_value="https://example.com/ref.mp3"):
+                        result = seedance_nodes.SeedanceMultimodalNode().generate(
+                            "doubao-seedance-2-0-fast-260128",
+                            "Blend the supplied references.",
+                            "720p",
+                            "5",
+                            "adaptive",
+                            True,
+                            False,
+                            image_1=object(),
+                            video_1=fake_video,
+                            audio_1=fake_audio,
+                        )
 
         request_payload = fake_client.calls[0][2]["json"]
         content = request_payload["extra_body"]["content"]
@@ -332,7 +362,7 @@ class BackendConfigTests(unittest.TestCase):
         self.assertEqual(result["result"][1], "video-123")
 
     def test_multimodal_node_requires_at_least_one_reference(self):
-        with self.assertRaisesRegex(ValueError, "At least one image URL, video URL, or audio URL reference is required."):
+        with self.assertRaisesRegex(ValueError, "At least one image, video, or audio reference is required."):
             seedance_nodes.SeedanceMultimodalNode().generate(
                 "doubao-seedance-2-0-fast-260128",
                 "Animate the references.",
@@ -343,31 +373,19 @@ class BackendConfigTests(unittest.TestCase):
                 False,
             )
 
-    def test_multimodal_node_rejects_invalid_image_url(self):
-        with self.assertRaisesRegex(ValueError, "image_url must be a valid http or https URL."):
-            seedance_nodes.SeedanceMultimodalNode().generate(
-                "doubao-seedance-2-0-fast-260128",
-                "Animate the references.",
-                "720p",
-                "5",
-                "adaptive",
-                True,
-                False,
-                image_url_1="data:image/jpeg;base64,ZmFrZQ==",
-            )
-
-    def test_multimodal_node_rejects_invalid_video_url(self):
-        with self.assertRaisesRegex(ValueError, "video_url must be a valid http or https URL."):
-            seedance_nodes.SeedanceMultimodalNode().generate(
-                "doubao-seedance-2-0-fast-260128",
-                "Animate the references.",
-                "720p",
-                "5",
-                "adaptive",
-                True,
-                False,
-                video_url_1="not-a-url",
-            )
+    def test_multimodal_node_surfaces_upload_failures(self):
+        with mock.patch.object(seedance_nodes, "_upload_image_reference", side_effect=ValueError("upload failed")):
+            with self.assertRaisesRegex(ValueError, "upload failed"):
+                seedance_nodes.SeedanceMultimodalNode().generate(
+                    "doubao-seedance-2-0-fast-260128",
+                    "Animate the references.",
+                    "720p",
+                    "5",
+                    "adaptive",
+                    True,
+                    False,
+                    image_1=object(),
+                )
 
     def test_preview_video_returns_remote_url_when_save_disabled(self):
         result = seedance_nodes.PreviewVideoNode().run(

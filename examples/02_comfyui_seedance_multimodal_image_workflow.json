@@ -1,17 +1,17 @@
 {
-  "last_node_id": 2,
-  "last_link_id": 1,
+  "last_node_id": 3,
+  "last_link_id": 2,
   "nodes": [
     {
       "id": 1,
-      "type": "ComfyUI-Seedance Multimodal-to-Video",
+      "type": "LoadImage",
       "pos": [
-        360,
+        160,
         220
       ],
       "size": {
-        "0": 460,
-        "1": 460
+        "0": 320,
+        "1": 320
       },
       "flags": {},
       "order": 0,
@@ -19,10 +19,53 @@
       "inputs": [],
       "outputs": [
         {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            1
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png",
+        "image"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "ComfyUI-Seedance Multimodal-to-Video",
+      "pos": [
+        580,
+        220
+      ],
+      "size": {
+        "0": 440,
+        "1": 360
+      },
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image_1",
+          "type": "IMAGE",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
           "name": "url",
           "type": "STRING",
           "links": [
-            1
+            2
           ]
         },
         {
@@ -41,34 +84,19 @@
       },
       "widgets_values": [
         "doubao-seedance-2-0-fast-260128",
-        "Animate the referenced product image with gentle camera motion and preserve the subject appearance.",
+        "Animate the uploaded image while preserving the subject and composition.",
         "720p",
         "5",
         "adaptive",
         true,
-        false,
-        "https://example.com/reference-image-1.jpg",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        ""
+        false
       ]
     },
     {
-      "id": 2,
+      "id": 3,
       "type": "ComfyUI-Seedance Preview Video",
       "pos": [
-        920,
+        1080,
         220
       ],
       "size": {
@@ -76,13 +104,13 @@
         "1": 180
       },
       "flags": {},
-      "order": 1,
+      "order": 2,
       "mode": 0,
       "inputs": [
         {
           "name": "video_url",
           "type": "STRING",
-          "link": 1
+          "link": 2
         }
       ],
       "outputs": [
@@ -107,6 +135,14 @@
       1,
       0,
       2,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
       0,
       "STRING"
     ]

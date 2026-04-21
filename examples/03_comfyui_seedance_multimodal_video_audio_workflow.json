@@ -1,17 +1,17 @@
 {
-  "last_node_id": 2,
-  "last_link_id": 1,
+  "last_node_id": 4,
+  "last_link_id": 3,
   "nodes": [
     {
       "id": 1,
-      "type": "ComfyUI-Seedance Multimodal-to-Video",
+      "type": "LoadVideo",
       "pos": [
-        360,
-        220
+        120,
+        160
       ],
       "size": {
-        "0": 460,
-        "1": 460
+        "0": 320,
+        "1": 120
       },
       "flags": {},
       "order": 0,
@@ -19,10 +19,83 @@
       "inputs": [],
       "outputs": [
         {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadVideo"
+      },
+      "widgets_values": [
+        "example.mp4"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "LoadAudio",
+      "pos": [
+        120,
+        340
+      ],
+      "size": {
+        "0": 320,
+        "1": 120
+      },
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadAudio"
+      },
+      "widgets_values": [
+        "example.mp3"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "ComfyUI-Seedance Multimodal-to-Video",
+      "pos": [
+        560,
+        220
+      ],
+      "size": {
+        "0": 440,
+        "1": 360
+      },
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video_1",
+          "type": "VIDEO",
+          "link": 1
+        },
+        {
+          "name": "audio_1",
+          "type": "AUDIO",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
           "name": "url",
           "type": "STRING",
           "links": [
-            1
+            3
           ]
         },
         {
@@ -41,34 +114,19 @@
       },
       "widgets_values": [
         "doubao-seedance-2-0-fast-260128",
-        "Use the reference video framing and synchronize the final rhythm to the supplied music.",
+        "Follow the pacing and framing of the uploaded video and use the uploaded audio as the soundtrack.",
         "720p",
         "5",
         "adaptive",
         true,
-        false,
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "https://example.com/reference-video.mp4",
-        "",
-        "",
-        "https://example.com/reference-audio.mp3",
-        "",
-        ""
+        false
       ]
     },
     {
-      "id": 2,
+      "id": 4,
       "type": "ComfyUI-Seedance Preview Video",
       "pos": [
-        920,
+        1060,
         220
       ],
       "size": {
@@ -76,13 +134,13 @@
         "1": 180
       },
       "flags": {},
-      "order": 1,
+      "order": 3,
       "mode": 0,
       "inputs": [
         {
           "name": "video_url",
           "type": "STRING",
-          "link": 1
+          "link": 3
         }
       ],
       "outputs": [
@@ -106,7 +164,23 @@
       1,
       1,
       0,
+      3,
+      0,
+      "VIDEO"
+    ],
+    [
       2,
+      2,
+      0,
+      3,
+      0,
+      "AUDIO"
+    ],
+    [
+      3,
+      3,
+      0,
+      4,
       0,
       "STRING"
     ]
