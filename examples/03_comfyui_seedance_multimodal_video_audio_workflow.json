@@ -1,0 +1,126 @@
+{
+  "last_node_id": 2,
+  "last_link_id": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "ComfyUI-Seedance Multimodal-to-Video",
+      "pos": [
+        360,
+        220
+      ],
+      "size": {
+        "0": 460,
+        "1": 460
+      },
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "url",
+          "type": "STRING",
+          "links": [
+            1
+          ]
+        },
+        {
+          "name": "video_id",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "file_path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ComfyUI-Seedance Multimodal-to-Video"
+      },
+      "widgets_values": [
+        "doubao-seedance-2-0-fast-260128",
+        "Use the reference video framing and synchronize the final rhythm to the supplied music.",
+        "720p",
+        "5",
+        "adaptive",
+        true,
+        false,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "https://example.com/reference-video.mp4",
+        "",
+        "",
+        "https://example.com/reference-audio.mp3",
+        "",
+        ""
+      ]
+    },
+    {
+      "id": 2,
+      "type": "ComfyUI-Seedance Preview Video",
+      "pos": [
+        920,
+        220
+      ],
+      "size": {
+        "0": 330,
+        "1": 180
+      },
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video_url",
+          "type": "STRING",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "file_path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ComfyUI-Seedance Preview Video"
+      },
+      "widgets_values": [
+        "ComfyUI-Seedance",
+        true
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1.0,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}
