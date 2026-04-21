@@ -4,14 +4,14 @@
   "nodes": [
     {
       "id": 1,
-      "type": "LoadVideo",
+      "type": "LoadImage",
       "pos": [
         120,
-        160
+        150
       ],
       "size": {
         "0": 320,
-        "1": 120
+        "1": 320
       },
       "flags": {},
       "order": 0,
@@ -19,30 +19,36 @@
       "inputs": [],
       "outputs": [
         {
-          "name": "VIDEO",
-          "type": "VIDEO",
+          "name": "IMAGE",
+          "type": "IMAGE",
           "links": [
             1
           ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
         }
       ],
       "properties": {
-        "Node name for S&R": "LoadVideo"
+        "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "example.mp4"
+        "first_frame.png",
+        "image"
       ]
     },
     {
       "id": 2,
-      "type": "LoadAudio",
+      "type": "LoadImage",
       "pos": [
         120,
-        340
+        520
       ],
       "size": {
         "0": 320,
-        "1": 120
+        "1": 320
       },
       "flags": {},
       "order": 1,
@@ -50,29 +56,35 @@
       "inputs": [],
       "outputs": [
         {
-          "name": "AUDIO",
-          "type": "AUDIO",
+          "name": "IMAGE",
+          "type": "IMAGE",
           "links": [
             2
           ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
         }
       ],
       "properties": {
-        "Node name for S&R": "LoadAudio"
+        "Node name for S&R": "LoadImage"
       },
       "widgets_values": [
-        "example.mp3"
+        "last_frame.png",
+        "image"
       ]
     },
     {
       "id": 3,
-      "type": "ComfyUI-Seedance Multimodal-to-Video",
+      "type": "ComfyUI-Seedance First-Last-Frame-to-Video",
       "pos": [
-        560,
-        220
+        580,
+        320
       ],
       "size": {
-        "0": 440,
+        "0": 460,
         "1": 360
       },
       "flags": {},
@@ -80,13 +92,13 @@
       "mode": 0,
       "inputs": [
         {
-          "name": "video_1",
-          "type": "VIDEO",
+          "name": "first_image",
+          "type": "IMAGE",
           "link": 1
         },
         {
-          "name": "audio_1",
-          "type": "AUDIO",
+          "name": "last_image",
+          "type": "IMAGE",
           "link": 2
         }
       ],
@@ -110,11 +122,11 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "ComfyUI-Seedance Multimodal-to-Video"
+        "Node name for S&R": "ComfyUI-Seedance First-Last-Frame-to-Video"
       },
       "widgets_values": [
         "doubao-seedance-2-0-fast-260128",
-        "Follow the pacing and framing of the uploaded video and use the uploaded audio as the soundtrack.",
+        "Transition smoothly from the first image to the last image while keeping the same character and setting.",
         "720p",
         "5",
         "adaptive",
@@ -126,8 +138,8 @@
       "id": 4,
       "type": "ComfyUI-Seedance Preview Video",
       "pos": [
-        1060,
-        220
+        1100,
+        320
       ],
       "size": {
         "0": 330,
@@ -166,15 +178,15 @@
       0,
       3,
       0,
-      "VIDEO"
+      "IMAGE"
     ],
     [
       2,
       2,
       0,
       3,
-      0,
-      "AUDIO"
+      1,
+      "IMAGE"
     ],
     [
       3,

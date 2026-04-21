@@ -78,9 +78,11 @@ class FakeVideoReference:
 
 
 class BackendConfigTests(unittest.TestCase):
-    def test_node_mapping_contains_text_multimodal_and_preview_nodes(self):
-        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 3)
+    def test_node_mapping_contains_all_generation_and_preview_nodes(self):
+        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 5)
         self.assertIn("ComfyUI-Seedance Text-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance First-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance First-Last-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Multimodal-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Preview Video", seedance_package.NODE_CLASS_MAPPINGS)
 
@@ -196,64 +198,58 @@ class BackendConfigTests(unittest.TestCase):
         self.assertEqual(payload["extra_body"]["watermark"], False)
         self.assertNotIn("content", payload["extra_body"])
 
-    def test_image_payload_contains_reference_content(self):
+    def test_non_text_payload_allows_empty_prompt(self):
         payload = video_api.build_generation_payload(
             "doubao-seedance-2-0-fast-260128",
-            "Animate the image.",
+            "",
+            "720p",
+            "5",
+            "3:4",
+            True,
+            False,
+            content=[video_api.build_first_frame_payload("https://example.com/first.png")],
+            prompt_required=False,
+        )
+        self.assertNotIn("prompt", payload)
+
+    def test_first_frame_payload_contains_first_frame_role(self):
+        payload = video_api.build_generation_payload(
+            "doubao-seedance-2-0-fast-260128",
+            "",
             "480p",
             "-1",
             "16:9",
             False,
             True,
-            content=[video_api.build_image_reference_payload("https://example.com/ref.jpg")],
+            content=[video_api.build_first_frame_payload("https://example.com/first.jpg")],
+            prompt_required=False,
         )
         part = payload["extra_body"]["content"][0]
         self.assertEqual(part["type"], "image_url")
-        self.assertEqual(part["role"], "reference_image")
-        self.assertEqual(part["image_url"]["url"], "https://example.com/ref.jpg")
+        self.assertEqual(part["role"], "first_frame")
+        self.assertEqual(part["image_url"]["url"], "https://example.com/first.jpg")
         self.assertEqual(payload["extra_body"]["duration"], -1)
 
-    def test_video_payload_contains_reference_content(self):
+    def test_first_last_frame_payload_contains_expected_roles(self):
         payload = video_api.build_generation_payload(
             "doubao-seedance-2-0-fast-260128",
-            "Restyle the video.",
+            "Animate from first to last frame.",
             "720p",
             "5",
             "9:16",
             True,
             False,
-            content=[video_api.build_video_reference_payload("https://example.com/ref.mp4")],
+            content=[
+                video_api.build_first_frame_payload("https://example.com/first.jpg"),
+                video_api.build_last_frame_payload("https://example.com/last.jpg"),
+            ],
         )
-        part = payload["extra_body"]["content"][0]
-        self.assertEqual(part["type"], "video_url")
-        self.assertEqual(part["role"], "reference_video")
-        self.assertEqual(part["video_url"]["url"], "https://example.com/ref.mp4")
-
-    def test_audio_payload_contains_reference_content(self):
-        payload = video_api.build_generation_payload(
-            "doubao-seedance-2-0-fast-260128",
-            "Visualize the music.",
-            "720p",
-            "5",
-            "1:1",
-            True,
-            False,
-            content=[video_api.build_audio_reference_payload("https://example.com/ref.mp3")],
+        self.assertEqual(
+            [item["role"] for item in payload["extra_body"]["content"]],
+            ["first_frame", "last_frame"],
         )
-        part = payload["extra_body"]["content"][0]
-        self.assertEqual(part["type"], "audio_url")
-        self.assertEqual(part["role"], "reference_audio")
-        self.assertEqual(part["audio_url"]["url"], "https://example.com/ref.mp3")
 
-    def test_image_reference_rejects_non_url_non_data_input(self):
-        with self.assertRaisesRegex(ValueError, "image_url must be a valid http or https URL."):
-            video_api.build_image_reference_payload("ZmFrZQ==")
-
-    def test_image_reference_rejects_data_url(self):
-        with self.assertRaisesRegex(ValueError, "image_url must be a valid http or https URL."):
-            video_api.build_image_reference_payload("data:image/jpeg;base64,ZmFrZQ==")
-
-    def test_multimodal_payload_preserves_reference_order(self):
+    def test_multimodal_reference_payload_contains_reference_roles(self):
         payload = video_api.build_generation_payload(
             "doubao-seedance-2-0-fast-260128",
             "Blend all references into one ad.",
@@ -269,9 +265,17 @@ class BackendConfigTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [item["type"] for item in payload["extra_body"]["content"]],
-            ["image_url", "video_url", "audio_url"],
+            [item["role"] for item in payload["extra_body"]["content"]],
+            ["reference_image", "reference_video", "reference_audio"],
         )
+
+    def test_image_reference_rejects_non_url_non_data_input(self):
+        with self.assertRaisesRegex(ValueError, "image_url must be a valid http or https URL."):
+            video_api.build_image_reference_payload("ZmFrZQ==")
+
+    def test_image_reference_rejects_data_url(self):
+        with self.assertRaisesRegex(ValueError, "image_url must be a valid http or https URL."):
+            video_api.build_image_reference_payload("data:image/jpeg;base64,ZmFrZQ==")
 
     def test_video_reference_rejects_invalid_url(self):
         with self.assertRaisesRegex(ValueError, "video_url must be a valid http or https URL."):
@@ -322,6 +326,73 @@ class BackendConfigTests(unittest.TestCase):
             ("https://aihubmix.com/v1/videos/video-123/content", "video-123", ""),
         )
 
+    def test_first_frame_node_builds_first_frame_content(self):
+        fake_client = FakeVideoClient(
+            [
+                {"id": "video-123", "status": "in_progress"},
+                {"id": "video-123", "status": "completed"},
+            ]
+        )
+
+        @contextmanager
+        def fake_runtime_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
+            with mock.patch.object(seedance_nodes, "_upload_image_reference", return_value="https://example.com/first.png"):
+                result = seedance_nodes.SeedanceFirstFrameNode().generate(
+                    "doubao-seedance-2-0-fast-260128",
+                    "",
+                    "720p",
+                    "5",
+                    "adaptive",
+                    True,
+                    False,
+                    image=object(),
+                )
+
+        request_payload = fake_client.calls[0][2]["json"]
+        self.assertNotIn("prompt", request_payload)
+        self.assertEqual(request_payload["extra_body"]["content"][0]["role"], "first_frame")
+        self.assertEqual(result["result"][1], "video-123")
+
+    def test_first_last_frame_node_builds_expected_roles(self):
+        fake_client = FakeVideoClient(
+            [
+                {"id": "video-123", "status": "in_progress"},
+                {"id": "video-123", "status": "completed"},
+            ]
+        )
+
+        @contextmanager
+        def fake_runtime_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
+            with mock.patch.object(
+                seedance_nodes,
+                "_upload_image_reference",
+                side_effect=["https://example.com/first.png", "https://example.com/last.png"],
+            ):
+                result = seedance_nodes.SeedanceFirstLastFrameNode().generate(
+                    "doubao-seedance-2-0-fast-260128",
+                    "Keep the character consistent.",
+                    "720p",
+                    "5",
+                    "adaptive",
+                    True,
+                    False,
+                    first_image=object(),
+                    last_image=object(),
+                )
+
+        request_payload = fake_client.calls[0][2]["json"]
+        self.assertEqual(
+            [item["role"] for item in request_payload["extra_body"]["content"]],
+            ["first_frame", "last_frame"],
+        )
+        self.assertEqual(result["result"][1], "video-123")
+
     def test_multimodal_node_builds_mixed_references(self):
         fake_client = FakeVideoClient(
             [
@@ -343,7 +414,7 @@ class BackendConfigTests(unittest.TestCase):
                     with mock.patch.object(seedance_nodes, "_upload_audio_reference", return_value="https://example.com/ref.mp3"):
                         result = seedance_nodes.SeedanceMultimodalNode().generate(
                             "doubao-seedance-2-0-fast-260128",
-                            "Blend the supplied references.",
+                            "",
                             "720p",
                             "5",
                             "adaptive",
@@ -356,16 +427,18 @@ class BackendConfigTests(unittest.TestCase):
 
         request_payload = fake_client.calls[0][2]["json"]
         content = request_payload["extra_body"]["content"]
-        image_url = content[0]["image_url"]["url"]
-        self.assertEqual(image_url, "https://example.com/ref.jpg")
-        self.assertEqual([item["type"] for item in content], ["image_url", "video_url", "audio_url"])
+        self.assertNotIn("prompt", request_payload)
+        self.assertEqual(
+            [item["role"] for item in content],
+            ["reference_image", "reference_video", "reference_audio"],
+        )
         self.assertEqual(result["result"][1], "video-123")
 
     def test_multimodal_node_requires_at_least_one_reference(self):
         with self.assertRaisesRegex(ValueError, "At least one image, video, or audio reference is required."):
             seedance_nodes.SeedanceMultimodalNode().generate(
                 "doubao-seedance-2-0-fast-260128",
-                "Animate the references.",
+                "",
                 "720p",
                 "5",
                 "adaptive",
@@ -373,12 +446,25 @@ class BackendConfigTests(unittest.TestCase):
                 False,
             )
 
+    def test_multimodal_node_rejects_audio_only(self):
+        with self.assertRaisesRegex(ValueError, "At least one image or video reference is required when audio references are provided."):
+            seedance_nodes.SeedanceMultimodalNode().generate(
+                "doubao-seedance-2-0-fast-260128",
+                "",
+                "720p",
+                "5",
+                "adaptive",
+                True,
+                False,
+                audio_1={"waveform": "fake-waveform", "sample_rate": 44100},
+            )
+
     def test_multimodal_node_surfaces_upload_failures(self):
         with mock.patch.object(seedance_nodes, "_upload_image_reference", side_effect=ValueError("upload failed")):
             with self.assertRaisesRegex(ValueError, "upload failed"):
                 seedance_nodes.SeedanceMultimodalNode().generate(
                     "doubao-seedance-2-0-fast-260128",
-                    "Animate the references.",
+                    "",
                     "720p",
                     "5",
                     "adaptive",
@@ -393,10 +479,7 @@ class BackendConfigTests(unittest.TestCase):
             "ComfyUI-Seedance",
             False,
         )
-        self.assertEqual(
-            result["ui"]["video_url"],
-            ["https://example.com/video.mp4"],
-        )
+        self.assertEqual(result["ui"]["video_url"], ["https://example.com/video.mp4"])
         self.assertEqual(result["result"], ("",))
 
     def test_preview_video_saves_local_video_when_requested(self):

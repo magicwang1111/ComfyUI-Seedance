@@ -18,11 +18,11 @@ FAILURE_VIDEO_STATUSES = {"failed", "error", "cancelled"}
 COMPLETED_VIDEO_STATUS = "completed"
 
 
-def _clean_prompt(prompt):
+def _clean_prompt(prompt, required=True):
     if not isinstance(prompt, str):
         raise ValueError("prompt must be a string.")
     prompt = prompt.strip()
-    if not prompt:
+    if not prompt and required:
         raise ValueError("prompt is required.")
     return prompt
 
@@ -91,6 +91,14 @@ def _build_reference_payload(reference_type, role, url, field_name):
     }
 
 
+def build_first_frame_payload(image_url):
+    return _build_reference_payload("image_url", "first_frame", image_url, "image_url")
+
+
+def build_last_frame_payload(image_url):
+    return _build_reference_payload("image_url", "last_frame", image_url, "image_url")
+
+
 def build_image_reference_payload(image_url):
     return _build_reference_payload("image_url", "reference_image", image_url, "image_url")
 
@@ -112,6 +120,7 @@ def build_generation_payload(
     generate_audio=True,
     watermark=False,
     content=None,
+    prompt_required=True,
 ):
     extra_body = {
         "duration": _validate_duration(duration),
@@ -126,11 +135,14 @@ def build_generation_payload(
 
     payload = {
         "model": _validate_model_name(model_name),
-        "prompt": _clean_prompt(prompt),
         "resolution": _validate_resolution(resolution),
         "generate_audio": bool(generate_audio),
         "extra_body": extra_body,
     }
+
+    cleaned_prompt = _clean_prompt(prompt, required=prompt_required)
+    if cleaned_prompt:
+        payload["prompt"] = cleaned_prompt
 
     return payload
 

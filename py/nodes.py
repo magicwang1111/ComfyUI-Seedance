@@ -19,8 +19,10 @@ from .api import (
     RESOLUTION_OPTIONS,
     VideoAPIError,
     build_audio_reference_payload,
+    build_first_frame_payload,
     build_generation_payload,
     build_image_reference_payload,
+    build_last_frame_payload,
     build_video_reference_payload,
     extract_result_video_url,
     extract_task_id,
@@ -288,7 +290,17 @@ def _build_preview_result(video_url, filename_prefix, save_output):
     }
 
 
-def _build_generation_result(model, prompt, resolution, duration, ratio, generate_audio, watermark, content=None):
+def _build_generation_result(
+    model,
+    prompt,
+    resolution,
+    duration,
+    ratio,
+    generate_audio,
+    watermark,
+    content=None,
+    prompt_required=True,
+):
     with _runtime_client() as client:
         payload = build_generation_payload(
             model,
@@ -299,6 +311,7 @@ def _build_generation_result(model, prompt, resolution, duration, ratio, generat
             generate_audio=generate_audio,
             watermark=watermark,
             content=content,
+            prompt_required=prompt_required,
         )
         task_id, task_info = _submit_and_wait(client, model, payload)
         print(f"[{NODE_PREFIX}] completed {model} task_id={task_id}")
@@ -330,6 +343,25 @@ def _multimodal_optional_inputs():
     return inputs
 
 
+def _first_frame_inputs():
+    return {
+        "required": {
+            **_common_generation_inputs(),
+            "image": ("IMAGE",),
+        }
+    }
+
+
+def _first_last_frame_inputs():
+    return {
+        "required": {
+            **_common_generation_inputs(),
+            "first_image": ("IMAGE",),
+            "last_image": ("IMAGE",),
+        }
+    }
+
+
 def _tensor_to_pil_image(image):
     if image is None:
         raise ValueError("image is required.")
@@ -348,12 +380,12 @@ def _tensor_to_pil_image(image):
 
 
 def _upload_image_reference(image):
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
         temp_path = handle.name
 
     try:
         pil_image = _tensor_to_pil_image(image)
-        pil_image.save(temp_path, format="JPEG")
+        pil_image.save(temp_path, format="PNG")
         return upload_file_to_tmpfiles(temp_path, timeout=_create_upload_timeout())
     finally:
         if os.path.exists(temp_path):
@@ -396,20 +428,35 @@ def _upload_audio_reference(audio):
             os.remove(temp_path)
 
 
+def _build_first_frame_content(image):
+    return [build_first_frame_payload(_upload_image_reference(image))]
+
+
+def _build_first_last_frame_content(first_image, last_image):
+    return [
+        build_first_frame_payload(_upload_image_reference(first_image)),
+        build_last_frame_payload(_upload_image_reference(last_image)),
+    ]
+
+
 def _collect_reference_content(images, videos, audios):
+    image_inputs = [image for image in images if image is not None]
+    video_inputs = [video for video in videos if video is not None]
+    audio_inputs = [audio for audio in audios if audio is not None]
+
+    if audio_inputs and not image_inputs and not video_inputs:
+        raise ValueError("At least one image or video reference is required when audio references are provided.")
+
     content = []
 
-    for image in images:
-        if image is not None:
-            content.append(build_image_reference_payload(_upload_image_reference(image)))
+    for image in image_inputs:
+        content.append(build_image_reference_payload(_upload_image_reference(image)))
 
-    for video in videos:
-        if video is not None:
-            content.append(build_video_reference_payload(_upload_video_reference(video)))
+    for video in video_inputs:
+        content.append(build_video_reference_payload(_upload_video_reference(video)))
 
-    for audio in audios:
-        if audio is not None:
-            content.append(build_audio_reference_payload(_upload_audio_reference(audio)))
+    for audio in audio_inputs:
+        content.append(build_audio_reference_payload(_upload_audio_reference(audio)))
 
     if not content:
         raise ValueError("At least one image, video, or audio reference is required.")
@@ -437,6 +484,56 @@ class SeedanceTextNode:
             ratio,
             generate_audio,
             watermark,
+        )
+
+
+class SeedanceFirstFrameNode:
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("url", "video_id", "file_path")
+    FUNCTION = "generate"
+    OUTPUT_NODE = True
+    CATEGORY = NODE_CATEGORY
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _first_frame_inputs()
+
+    def generate(self, model, prompt, resolution, duration, ratio, generate_audio, watermark, image):
+        return _build_generation_result(
+            model,
+            prompt,
+            resolution,
+            duration,
+            ratio,
+            generate_audio,
+            watermark,
+            content=_build_first_frame_content(image),
+            prompt_required=False,
+        )
+
+
+class SeedanceFirstLastFrameNode:
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("url", "video_id", "file_path")
+    FUNCTION = "generate"
+    OUTPUT_NODE = True
+    CATEGORY = NODE_CATEGORY
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _first_last_frame_inputs()
+
+    def generate(self, model, prompt, resolution, duration, ratio, generate_audio, watermark, first_image, last_image):
+        return _build_generation_result(
+            model,
+            prompt,
+            resolution,
+            duration,
+            ratio,
+            generate_audio,
+            watermark,
+            content=_build_first_last_frame_content(first_image, last_image),
+            prompt_required=False,
         )
 
 
@@ -503,6 +600,7 @@ class SeedanceMultimodalNode:
             generate_audio,
             watermark,
             content=content,
+            prompt_required=False,
         )
 
 

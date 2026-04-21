@@ -41,21 +41,21 @@
     },
     {
       "id": 2,
-      "type": "ComfyUI-Seedance Multimodal-to-Video",
+      "type": "ComfyUI-Seedance First-Frame-to-Video",
       "pos": [
         580,
         220
       ],
       "size": {
         "0": 440,
-        "1": 360
+        "1": 340
       },
       "flags": {},
       "order": 1,
       "mode": 0,
       "inputs": [
         {
-          "name": "image_1",
+          "name": "image",
           "type": "IMAGE",
           "link": 1
         }
@@ -80,11 +80,11 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "ComfyUI-Seedance Multimodal-to-Video"
+        "Node name for S&R": "ComfyUI-Seedance First-Frame-to-Video"
       },
       "widgets_values": [
         "doubao-seedance-2-0-fast-260128",
-        "Animate the uploaded image while preserving the subject and composition.",
+        "Bring the uploaded portrait to life with subtle natural motion while keeping the same person and scene.",
         "720p",
         "5",
         "adaptive",
