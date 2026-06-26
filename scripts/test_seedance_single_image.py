@@ -13,19 +13,22 @@ if str(API_DIR) not in sys.path:
 
 from api import (  # noqa: E402
     Client,
+    MODEL_OPTIONS,
+    RATIO_OPTIONS,
+    RESOLUTION_OPTIONS,
     VideoAPIError,
     build_first_frame_payload,
     build_generation_payload,
     extract_result_video_url,
     extract_task_id,
+    file_to_data_url,
     submit_video_generation,
-    upload_file_to_tmpfiles,
     wait_for_video_completion,
 )
 
 
 CONFIG_JSON_PATH = ROOT_DIR / "config.local.json"
-DEFAULT_BASE_URL = "https://aihubmix.com"
+DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_POLL_INTERVAL = 15.0
 DEFAULT_REQUEST_TIMEOUT = 60
 DEFAULT_UPLOAD_TIMEOUT = 120
@@ -100,8 +103,6 @@ def _parse_poll_interval(value):
 
 def _normalize_base_url(value):
     normalized = str(value or "").strip().rstrip("/")
-    if normalized.endswith("/v1"):
-        normalized = normalized[:-3].rstrip("/")
     return normalized or DEFAULT_BASE_URL
 
 
@@ -109,20 +110,18 @@ def _resolve_api_key(config_data):
     if _json_value_present(config_data, "api_key"):
         return str(config_data["api_key"]).strip()
 
-    env_value = _load_env_value("SEEDANCE_API_KEY", "AIHUBMIX_API_KEY")
+    env_value = _load_env_value("ARK_API_KEY", "SEEDANCE_API_KEY")
     if env_value:
         return env_value
 
-    raise ValueError(
-        "An api_key is required. Add api_key to config.local.json or set SEEDANCE_API_KEY or AIHUBMIX_API_KEY."
-    )
+    raise ValueError("An api_key is required. Add api_key to config.local.json or set ARK_API_KEY or SEEDANCE_API_KEY.")
 
 
 def _resolve_base_url(config_data):
     if _json_value_present(config_data, "base_url"):
         return _normalize_base_url(config_data["base_url"])
 
-    env_value = _load_env_value("SEEDANCE_BASE_URL", "AIHUBMIX_BASE_URL")
+    env_value = _load_env_value("SEEDANCE_BASE_URL")
     if env_value:
         return _normalize_base_url(env_value)
 
@@ -133,7 +132,7 @@ def _resolve_poll_interval(config_data):
     if _json_value_present(config_data, "poll_interval"):
         return _parse_poll_interval(config_data["poll_interval"])
 
-    env_value = _load_env_value("SEEDANCE_POLL_INTERVAL", "AIHUBMIX_POLL_INTERVAL")
+    env_value = _load_env_value("SEEDANCE_POLL_INTERVAL")
     if env_value:
         return _parse_poll_interval(env_value)
 
@@ -144,7 +143,7 @@ def _resolve_request_timeout(config_data):
     if _json_value_present(config_data, "request_timeout"):
         return _parse_timeout(config_data["request_timeout"], "request_timeout")
 
-    env_value = _load_env_value("SEEDANCE_REQUEST_TIMEOUT", "AIHUBMIX_REQUEST_TIMEOUT")
+    env_value = _load_env_value("SEEDANCE_REQUEST_TIMEOUT")
     if env_value:
         return _parse_timeout(env_value, "request_timeout")
 
@@ -155,7 +154,7 @@ def _resolve_upload_timeout(config_data):
     if _json_value_present(config_data, "upload_timeout"):
         return _parse_timeout(config_data["upload_timeout"], "upload_timeout")
 
-    env_value = _load_env_value("SEEDANCE_UPLOAD_TIMEOUT", "AIHUBMIX_UPLOAD_TIMEOUT")
+    env_value = _load_env_value("SEEDANCE_UPLOAD_TIMEOUT")
     if env_value:
         return _parse_timeout(env_value, "upload_timeout")
 
@@ -179,20 +178,20 @@ def _build_parser():
         description="Upload a local image to a temporary public URL and test a Seedance first-frame image-to-video request."
     )
     parser.add_argument("--image", default=DEFAULT_IMAGE_PATH, help="Local image path.")
-    parser.add_argument("--model", default="doubao-seedance-2-0-260128", help="Seedance model name.")
+    parser.add_argument("--model", default="doubao-seedance-2-0-260128", choices=MODEL_OPTIONS, help="Seedance model name.")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="Prompt sent to Seedance.")
-    parser.add_argument("--resolution", default="720p", choices=["480p", "720p"], help="Output resolution.")
+    parser.add_argument("--resolution", default="720p", choices=RESOLUTION_OPTIONS, help="Output resolution.")
     parser.add_argument("--duration", type=int, default=4, help="Clip duration in seconds.")
     parser.add_argument(
         "--ratio",
         default="3:4",
-        choices=["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+        choices=RATIO_OPTIONS,
         help="Output ratio.",
     )
     parser.add_argument("--generate-audio", action="store_true", help="Enable audio generation.")
     parser.add_argument("--watermark", action="store_true", help="Enable watermark.")
     parser.add_argument("--submit-only", action="store_true", help="Submit the task but do not wait for completion.")
-    parser.add_argument("--no-download", action="store_true", help="Do not download the completed video.")
+    parser.add_argument("--no-download", action="store_true", help="Do not download the successful video result.")
     parser.add_argument(
         "--output-dir",
         default=str(ROOT_DIR / "debug_outputs"),
@@ -212,15 +211,13 @@ def main():
     base_url = _resolve_base_url(config_data)
     poll_interval = _resolve_poll_interval(config_data)
     request_timeout = _resolve_request_timeout(config_data)
-    upload_timeout = _resolve_upload_timeout(config_data)
-
     output_dir = Path(args.output_dir).expanduser().resolve()
     run_dir = _build_run_dir(output_dir)
 
     print(f"[Seedance Test] Local image: {image_path}")
-    print("[Seedance Test] Uploading local image to a temporary public URL...")
-    reference_image_url = upload_file_to_tmpfiles(image_path, timeout=upload_timeout)
-    print(f"[Seedance Test] Uploaded image URL: {reference_image_url}")
+    print("[Seedance Test] Encoding local image as a data URL...")
+    reference_image_url = file_to_data_url(image_path, default_mime_type="image/jpeg", max_size_bytes=30 * 1024 * 1024)
+    print("[Seedance Test] Encoded image data URL.")
 
     payload = build_generation_payload(
         model_name=args.model,

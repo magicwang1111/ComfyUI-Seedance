@@ -11,21 +11,30 @@ import numpy
 import PIL.Image
 
 from .api import (
+    AssetAPIError,
+    AssetClient,
     Client,
+    DEFAULT_ASSET_BASE_URL,
+    DEFAULT_ASSET_POLL_INTERVAL,
+    DEFAULT_ASSET_TIMEOUT,
     DEFAULT_UPLOAD_TIMEOUT,
+    IMAGE_DATA_URL_MAX_SIZE_BYTES,
     MODEL_OPTIONS,
     NODE_DURATION_OPTIONS,
     RATIO_OPTIONS,
     RESOLUTION_OPTIONS,
     VideoAPIError,
     build_audio_reference_payload,
+    build_asset_image_reference_payload,
     build_first_frame_payload,
     build_generation_payload,
     build_image_reference_payload,
     build_last_frame_payload,
     build_video_reference_payload,
+    asset_uri_from_id,
     extract_result_video_url,
     extract_task_id,
+    file_to_data_url,
     submit_video_generation,
     upload_file_to_tmpfiles,
     wait_for_video_completion,
@@ -37,10 +46,16 @@ CONFIG_JSON_PATH = ROOT_DIR / "config.local.json"
 NODE_PREFIX = "ComfyUI-Seedance"
 NODE_CATEGORY = NODE_PREFIX
 DEFAULT_FILENAME_PREFIX = NODE_PREFIX
-DEFAULT_BASE_URL = "https://aihubmix.com"
+DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_POLL_INTERVAL = 15.0
 DEFAULT_REQUEST_TIMEOUT = 60
 DEFAULT_UPLOAD_TIMEOUT_SECONDS = DEFAULT_UPLOAD_TIMEOUT
+DEFAULT_ASSET_PROJECT_NAME = "default"
+DEFAULT_ASSET_MODEL_PROMPT = (
+    "图片1中的模特穿上图片2中的服装，保持图片1的人脸身份、发型和身材特征一致，"
+    "服装款式、颜色、材质严格参考图片2。生成电商模特展示视频，人物自然站立/转身展示服装，"
+    "背景简洁，画面干净。"
+)
 
 
 def _load_json_config():
@@ -119,8 +134,6 @@ def _parse_poll_interval(value):
 
 def _normalize_base_url(value):
     normalized = str(value or "").strip().rstrip("/")
-    if normalized.endswith("/v1"):
-        normalized = normalized[:-3].rstrip("/")
     return normalized or DEFAULT_BASE_URL
 
 
@@ -128,20 +141,18 @@ def _resolve_api_key(config_data):
     if _json_value_present(config_data, "api_key"):
         return str(config_data["api_key"]).strip()
 
-    env_value = _load_env_value("SEEDANCE_API_KEY", "AIHUBMIX_API_KEY")
+    env_value = _load_env_value("ARK_API_KEY", "SEEDANCE_API_KEY")
     if env_value:
         return env_value
 
-    raise ValueError(
-        "An api_key is required. Add api_key to config.local.json or set SEEDANCE_API_KEY or AIHUBMIX_API_KEY."
-    )
+    raise ValueError("An api_key is required. Add api_key to config.local.json or set ARK_API_KEY or SEEDANCE_API_KEY.")
 
 
 def _resolve_base_url(config_data):
     if _json_value_present(config_data, "base_url"):
         return _normalize_base_url(config_data["base_url"])
 
-    env_value = _load_env_value("SEEDANCE_BASE_URL", "AIHUBMIX_BASE_URL")
+    env_value = _load_env_value("SEEDANCE_BASE_URL")
     if env_value:
         return _normalize_base_url(env_value)
 
@@ -152,7 +163,7 @@ def _resolve_poll_interval(config_data):
     if _json_value_present(config_data, "poll_interval"):
         return _parse_poll_interval(config_data["poll_interval"])
 
-    env_value = _load_env_value("SEEDANCE_POLL_INTERVAL", "AIHUBMIX_POLL_INTERVAL")
+    env_value = _load_env_value("SEEDANCE_POLL_INTERVAL")
     if env_value:
         return _parse_poll_interval(env_value)
 
@@ -163,7 +174,7 @@ def _resolve_request_timeout(config_data):
     if _json_value_present(config_data, "request_timeout"):
         return _parse_request_timeout(config_data["request_timeout"])
 
-    env_value = _load_env_value("SEEDANCE_REQUEST_TIMEOUT", "AIHUBMIX_REQUEST_TIMEOUT")
+    env_value = _load_env_value("SEEDANCE_REQUEST_TIMEOUT")
     if env_value:
         return _parse_request_timeout(env_value)
 
@@ -174,11 +185,83 @@ def _resolve_upload_timeout(config_data):
     if _json_value_present(config_data, "upload_timeout"):
         return _parse_request_timeout(config_data["upload_timeout"])
 
-    env_value = _load_env_value("SEEDANCE_UPLOAD_TIMEOUT", "AIHUBMIX_UPLOAD_TIMEOUT")
+    env_value = _load_env_value("SEEDANCE_UPLOAD_TIMEOUT")
     if env_value:
         return _parse_request_timeout(env_value)
 
     return DEFAULT_UPLOAD_TIMEOUT_SECONDS
+
+
+def _resolve_access_key_id(config_data):
+    if _json_value_present(config_data, "access_key_id"):
+        return str(config_data["access_key_id"]).strip()
+
+    env_value = _load_env_value("ARK_ACCESS_KEY_ID", "VOLCENGINE_ACCESS_KEY_ID", "VOLC_ACCESS_KEY_ID")
+    if env_value:
+        return env_value
+
+    raise ValueError(
+        "An access_key_id is required for asset upload. "
+        "Add access_key_id to config.local.json or set ARK_ACCESS_KEY_ID."
+    )
+
+
+def _resolve_secret_access_key(config_data):
+    if _json_value_present(config_data, "secret_access_key"):
+        return str(config_data["secret_access_key"]).strip()
+
+    env_value = _load_env_value("ARK_SECRET_ACCESS_KEY", "VOLCENGINE_SECRET_ACCESS_KEY", "VOLC_SECRET_ACCESS_KEY")
+    if env_value:
+        return env_value
+
+    raise ValueError(
+        "A secret_access_key is required for asset upload. "
+        "Add secret_access_key to config.local.json or set ARK_SECRET_ACCESS_KEY."
+    )
+
+
+def _resolve_asset_base_url(config_data):
+    if _json_value_present(config_data, "asset_base_url"):
+        return str(config_data["asset_base_url"]).strip().rstrip("/")
+
+    env_value = _load_env_value("SEEDANCE_ASSET_BASE_URL", "ARK_ASSET_BASE_URL")
+    if env_value:
+        return env_value.rstrip("/")
+
+    return DEFAULT_ASSET_BASE_URL
+
+
+def _resolve_asset_poll_interval(config_data):
+    if _json_value_present(config_data, "asset_poll_interval"):
+        return _parse_poll_interval(config_data["asset_poll_interval"])
+
+    env_value = _load_env_value("SEEDANCE_ASSET_POLL_INTERVAL", "ARK_ASSET_POLL_INTERVAL")
+    if env_value:
+        return _parse_poll_interval(env_value)
+
+    return DEFAULT_ASSET_POLL_INTERVAL
+
+
+def _resolve_asset_timeout(config_data):
+    if _json_value_present(config_data, "asset_timeout"):
+        return _parse_request_timeout(config_data["asset_timeout"])
+
+    env_value = _load_env_value("SEEDANCE_ASSET_TIMEOUT", "ARK_ASSET_TIMEOUT")
+    if env_value:
+        return _parse_request_timeout(env_value)
+
+    return DEFAULT_ASSET_TIMEOUT
+
+
+def _resolve_asset_project_name(config_data):
+    if _json_value_present(config_data, "asset_project_name"):
+        return str(config_data["asset_project_name"]).strip()
+
+    env_value = _load_env_value("SEEDANCE_ASSET_PROJECT_NAME", "ARK_PROJECT_NAME")
+    if env_value:
+        return env_value
+
+    return DEFAULT_ASSET_PROJECT_NAME
 
 
 def _create_runtime_client():
@@ -196,9 +279,34 @@ def _create_upload_timeout():
     return _resolve_upload_timeout(config_data)
 
 
+def _create_asset_client():
+    config_data = _load_json_config()
+    return AssetClient(
+        _resolve_access_key_id(config_data),
+        _resolve_secret_access_key(config_data),
+        base_url=_resolve_asset_base_url(config_data),
+        timeout=_resolve_asset_timeout(config_data),
+        poll_interval=_resolve_asset_poll_interval(config_data),
+    )
+
+
+def _create_asset_project_name():
+    config_data = _load_json_config()
+    return _resolve_asset_project_name(config_data)
+
+
 @contextmanager
 def _runtime_client():
     client = _create_runtime_client()
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@contextmanager
+def _asset_client():
+    client = _create_asset_client()
     try:
         yield client
     finally:
@@ -213,7 +321,20 @@ def _raise_with_api_guidance(exc):
         ) from exc
 
     if exc.status_code == 429:
-        raise ValueError("AIHubMix rate limit exceeded (429). Wait and retry.") from exc
+        raise ValueError("Volcengine Ark rate limit exceeded (429). Wait and retry.") from exc
+
+    raise ValueError(str(exc)) from exc
+
+
+def _raise_with_asset_api_guidance(exc):
+    if exc.status_code in {401, 403}:
+        raise ValueError(
+            f"The asset API rejected the request with {exc.status_code}. "
+            "Check access_key_id, secret_access_key, ArkFullAccess permission, and project_name."
+        ) from exc
+
+    if exc.status_code == 429:
+        raise ValueError("Volcengine Ark asset API rate limit exceeded (429). Wait and retry.") from exc
 
     raise ValueError(str(exc)) from exc
 
@@ -314,7 +435,7 @@ def _build_generation_result(
             prompt_required=prompt_required,
         )
         task_id, task_info = _submit_and_wait(client, model, payload)
-        print(f"[{NODE_PREFIX}] completed {model} task_id={task_id}")
+        print(f"[{NODE_PREFIX}] succeeded {model} task_id={task_id}")
         return _build_video_result(client, task_id, task_info)
 
 
@@ -362,6 +483,42 @@ def _first_last_frame_inputs():
     }
 
 
+def _asset_model_inputs():
+    common_inputs = _common_generation_inputs()
+    return {
+        "required": {
+            "model": common_inputs["model"],
+            "model_asset_uri": ("STRING", {"default": "asset://asset-"}),
+            "prompt": ("STRING", {"multiline": True, "default": DEFAULT_ASSET_MODEL_PROMPT}),
+            "outfit_image": ("IMAGE",),
+            "resolution": common_inputs["resolution"],
+            "duration": common_inputs["duration"],
+            "ratio": common_inputs["ratio"],
+            "generate_audio": common_inputs["generate_audio"],
+            "watermark": common_inputs["watermark"],
+        },
+        "optional": {
+            "extra_reference_asset_uri": ("STRING", {"default": ""}),
+            "extra_reference_image": ("IMAGE",),
+        },
+    }
+
+
+def _upload_image_asset_inputs():
+    return {
+        "required": {
+            "group_id": ("STRING", {"default": "group-"}),
+            "source_url": ("STRING", {"default": ""}),
+            "project_name": ("STRING", {"default": DEFAULT_ASSET_PROJECT_NAME}),
+            "name": ("STRING", {"default": ""}),
+            "wait_for_active": ("BOOLEAN", {"default": True}),
+        },
+        "optional": {
+            "image": ("IMAGE",),
+        },
+    }
+
+
 def _tensor_to_pil_image(image):
     if image is None:
         raise ValueError("image is required.")
@@ -380,6 +537,19 @@ def _tensor_to_pil_image(image):
 
 
 def _upload_image_reference(image):
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+        temp_path = handle.name
+
+    try:
+        pil_image = _tensor_to_pil_image(image)
+        pil_image.save(temp_path, format="PNG")
+        return file_to_data_url(temp_path, "image/png", max_size_bytes=IMAGE_DATA_URL_MAX_SIZE_BYTES)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def _upload_image_for_asset(image):
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
         temp_path = handle.name
 
@@ -439,6 +609,61 @@ def _build_first_last_frame_content(first_image, last_image):
     ]
 
 
+def _build_asset_model_content(model_asset_uri, outfit_image, extra_reference_image=None, extra_reference_asset_uri=""):
+    content = [
+        build_asset_image_reference_payload(model_asset_uri),
+        build_image_reference_payload(_upload_image_reference(outfit_image)),
+    ]
+
+    extra_reference_asset_uri = str(extra_reference_asset_uri or "").strip()
+    if extra_reference_asset_uri:
+        content.append(build_image_reference_payload(extra_reference_asset_uri))
+
+    if extra_reference_image is not None:
+        content.append(build_image_reference_payload(_upload_image_reference(extra_reference_image)))
+
+    return content
+
+
+def _resolve_asset_source_url(image, source_url):
+    source_url = str(source_url or "").strip()
+    if source_url:
+        return source_url
+    if image is None:
+        raise ValueError("Either source_url or image is required for asset upload.")
+    return _upload_image_for_asset(image)
+
+
+def _build_asset_upload_result(group_id, source_url, project_name, name, wait_for_active, image=None):
+    project_name = str(project_name or "").strip() or _create_asset_project_name()
+    source_url = _resolve_asset_source_url(image, source_url)
+
+    with _asset_client() as client:
+        try:
+            created_asset = client.create_asset(
+                group_id=group_id,
+                source_url=source_url,
+                asset_type="Image",
+                project_name=project_name,
+                name=name,
+            )
+            asset_id = str(created_asset.get("Id") or "").strip()
+            if not asset_id:
+                raise ValueError("CreateAsset succeeded but did not return Id.")
+
+            if wait_for_active:
+                asset_info = client.wait_for_asset_active(asset_id, project_name=project_name)
+                status = str(asset_info.get("Status") or "Active").strip()
+                asset_url = str(asset_info.get("URL") or "").strip()
+            else:
+                status = str(created_asset.get("Status") or "Processing").strip()
+                asset_url = str(created_asset.get("URL") or "").strip()
+        except AssetAPIError as exc:
+            _raise_with_asset_api_guidance(exc)
+
+    return {"result": (asset_uri_from_id(asset_id), asset_id, status, asset_url)}
+
+
 def _collect_reference_content(images, videos, audios):
     image_inputs = [image for image in images if image is not None]
     video_inputs = [video for video in videos if video is not None]
@@ -484,6 +709,27 @@ class SeedanceTextNode:
             ratio,
             generate_audio,
             watermark,
+        )
+
+
+class SeedanceUploadImageAssetNode:
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("asset_uri", "asset_id", "status", "asset_url")
+    FUNCTION = "upload"
+    CATEGORY = NODE_CATEGORY
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _upload_image_asset_inputs()
+
+    def upload(self, group_id, source_url="", project_name=DEFAULT_ASSET_PROJECT_NAME, name="", wait_for_active=True, image=None):
+        return _build_asset_upload_result(
+            group_id=group_id,
+            source_url=source_url,
+            project_name=project_name,
+            name=name,
+            wait_for_active=wait_for_active,
+            image=image,
         )
 
 
@@ -534,6 +780,49 @@ class SeedanceFirstLastFrameNode:
             watermark,
             content=_build_first_last_frame_content(first_image, last_image),
             prompt_required=False,
+        )
+
+
+class SeedanceAssetModelNode:
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("url", "video_id", "file_path")
+    FUNCTION = "generate"
+    OUTPUT_NODE = True
+    CATEGORY = NODE_CATEGORY
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _asset_model_inputs()
+
+    def generate(
+        self,
+        model,
+        model_asset_uri,
+        prompt,
+        outfit_image,
+        resolution,
+        duration,
+        ratio,
+        generate_audio,
+        watermark,
+        extra_reference_asset_uri="",
+        extra_reference_image=None,
+    ):
+        return _build_generation_result(
+            model,
+            prompt,
+            resolution,
+            duration,
+            ratio,
+            generate_audio,
+            watermark,
+            content=_build_asset_model_content(
+                model_asset_uri,
+                outfit_image,
+                extra_reference_image=extra_reference_image,
+                extra_reference_asset_uri=extra_reference_asset_uri,
+            ),
+            prompt_required=True,
         )
 
 

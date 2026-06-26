@@ -1,7 +1,13 @@
 {
   "api_key": "",
-  "base_url": "https://aihubmix.com",
+  "base_url": "https://ark.cn-beijing.volces.com/api/v3",
   "poll_interval": 15.0,
   "request_timeout": 60,
-  "upload_timeout": 120
+  "upload_timeout": 120,
+  "access_key_id": "",
+  "secret_access_key": "",
+  "asset_base_url": "https://ark.cn-beijing.volcengineapi.com",
+  "asset_project_name": "default",
+  "asset_poll_interval": 5.0,
+  "asset_timeout": 60
 }

@@ -1,3 +1,5 @@
+import base64
+import mimetypes
 import os
 from urllib.parse import urlparse
 
@@ -7,6 +9,7 @@ import httpx
 DEFAULT_UPLOAD_API_URL = "https://tmpfiles.org/api/v1/upload"
 DEFAULT_UPLOAD_TIMEOUT = 120
 TMPFILES_MAX_SIZE_BYTES = 100 * 1024 * 1024
+IMAGE_DATA_URL_MAX_SIZE_BYTES = 30 * 1024 * 1024
 
 
 def _normalize_tmpfiles_download_url(page_url):
@@ -60,3 +63,20 @@ def upload_file_to_tmpfiles(file_path, timeout=DEFAULT_UPLOAD_TIMEOUT):
 
     page_url = payload.get("data", {}).get("url")
     return _normalize_tmpfiles_download_url(page_url)
+
+
+def file_to_data_url(file_path, default_mime_type="application/octet-stream", max_size_bytes=None):
+    normalized_path = os.path.abspath(os.fspath(file_path))
+    if not os.path.exists(normalized_path):
+        raise ValueError(f"Data URL file does not exist: {normalized_path}")
+
+    file_size = os.path.getsize(normalized_path)
+    if max_size_bytes is not None and file_size > max_size_bytes:
+        max_mb = max_size_bytes / (1024 * 1024)
+        raise ValueError(f"Local media file exceeds the {max_mb:.0f} MB data URL limit.")
+
+    mime_type = mimetypes.guess_type(normalized_path)[0] or default_mime_type
+    with open(normalized_path, "rb") as handle:
+        encoded = base64.b64encode(handle.read()).decode("ascii")
+
+    return f"data:{mime_type};base64,{encoded}"

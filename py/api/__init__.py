@@ -1,5 +1,13 @@
+from .asset import (
+    AssetAPIError,
+    AssetClient,
+    DEFAULT_ASSET_BASE_URL,
+    DEFAULT_ASSET_POLL_INTERVAL,
+    DEFAULT_ASSET_TIMEOUT,
+    asset_uri_from_id,
+)
 from .client import Client, VideoAPIError
-from .upload import DEFAULT_UPLOAD_TIMEOUT, upload_file_to_tmpfiles
+from .upload import DEFAULT_UPLOAD_TIMEOUT, IMAGE_DATA_URL_MAX_SIZE_BYTES, file_to_data_url, upload_file_to_tmpfiles
 from .video import (
     DURATION_OPTIONS,
     MODEL_OPTIONS,
@@ -7,6 +15,7 @@ from .video import (
     RATIO_OPTIONS,
     RESOLUTION_OPTIONS,
     build_audio_reference_payload,
+    build_asset_image_reference_payload,
     build_first_frame_payload,
     build_generation_payload,
     build_image_reference_payload,
@@ -20,14 +29,22 @@ from .video import (
 
 __all__ = [
     "Client",
+    "AssetAPIError",
+    "AssetClient",
+    "DEFAULT_ASSET_BASE_URL",
+    "DEFAULT_ASSET_POLL_INTERVAL",
+    "DEFAULT_ASSET_TIMEOUT",
     "DEFAULT_UPLOAD_TIMEOUT",
     "DURATION_OPTIONS",
+    "IMAGE_DATA_URL_MAX_SIZE_BYTES",
     "MODEL_OPTIONS",
     "NODE_DURATION_OPTIONS",
     "RATIO_OPTIONS",
     "RESOLUTION_OPTIONS",
     "VideoAPIError",
+    "asset_uri_from_id",
     "build_audio_reference_payload",
+    "build_asset_image_reference_payload",
     "build_first_frame_payload",
     "build_generation_payload",
     "build_image_reference_payload",
@@ -35,6 +52,7 @@ __all__ = [
     "build_video_reference_payload",
     "extract_result_video_url",
     "extract_task_id",
+    "file_to_data_url",
     "submit_video_generation",
     "upload_file_to_tmpfiles",
     "wait_for_video_completion",

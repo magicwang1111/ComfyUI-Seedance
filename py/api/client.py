@@ -3,7 +3,7 @@ import json
 import httpx
 
 
-DEFAULT_BASE_URL = "https://aihubmix.com"
+DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 
 
 class VideoAPIError(Exception):
@@ -70,8 +70,6 @@ class Client:
     @staticmethod
     def normalize_base_url(base_url):
         normalized = (base_url or DEFAULT_BASE_URL).strip().rstrip("/")
-        if normalized.endswith("/v1"):
-            normalized = normalized[:-3].rstrip("/")
         return normalized or DEFAULT_BASE_URL
 
     @staticmethod
