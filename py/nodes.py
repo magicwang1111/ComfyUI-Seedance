@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import urllib.parse
+import wave
 from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
@@ -469,7 +470,11 @@ def _first_frame_inputs():
         "required": {
             **_common_generation_inputs(),
             "image": ("IMAGE",),
-        }
+        },
+        "optional": {
+            "reference_video": ("VIDEO",),
+            "reference_audio": ("AUDIO",),
+        },
     }
 
 
@@ -500,6 +505,8 @@ def _asset_model_inputs():
         "optional": {
             "extra_reference_asset_uri": ("STRING", {"default": ""}),
             "extra_reference_image": ("IMAGE",),
+            "reference_video": ("VIDEO",),
+            "reference_audio": ("AUDIO",),
         },
     }
 
@@ -577,29 +584,64 @@ def _upload_video_reference(video):
             os.remove(temp_path)
 
 
+def _write_audio_waveform_wav(file_path, waveform, sample_rate):
+    if hasattr(waveform, "detach"):
+        waveform = waveform.detach()
+    if hasattr(waveform, "cpu"):
+        waveform = waveform.cpu()
+    if hasattr(waveform, "numpy"):
+        waveform = waveform.numpy()
+
+    samples = numpy.asarray(waveform, dtype=numpy.float32)
+    if samples.ndim == 3:
+        if samples.shape[0] == 0:
+            raise ValueError("audio waveform batch is empty.")
+        samples = samples[0]
+    if samples.ndim == 1:
+        samples = samples[numpy.newaxis, :]
+    if samples.ndim != 2 or samples.shape[0] == 0 or samples.shape[1] == 0:
+        raise ValueError("audio waveform must contain channels and samples.")
+
+    try:
+        normalized_sample_rate = int(sample_rate)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("audio sample_rate must be a positive integer.") from exc
+    if normalized_sample_rate <= 0:
+        raise ValueError("audio sample_rate must be a positive integer.")
+
+    pcm_samples = numpy.rint(numpy.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2")
+    with wave.open(str(file_path), "wb") as wav_file:
+        wav_file.setnchannels(pcm_samples.shape[0])
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(normalized_sample_rate)
+        wav_file.writeframes(pcm_samples.T.tobytes())
+
+
 def _upload_audio_reference(audio):
     if audio is None:
         raise ValueError("audio is required.")
-
-    import torchaudio
-
-    waveform = audio["waveform"].cpu()[0]
-    if waveform.dim() == 1:
-        waveform = waveform.unsqueeze(0)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
         temp_path = handle.name
 
     try:
-        torchaudio.save(temp_path, waveform, audio["sample_rate"])
+        _write_audio_waveform_wav(temp_path, audio["waveform"], audio["sample_rate"])
         return upload_file_to_tmpfiles(temp_path, timeout=_create_upload_timeout())
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
 
-def _build_first_frame_content(image):
-    return [build_first_frame_payload(_upload_image_reference(image))]
+def _build_first_frame_content(image, reference_video=None, reference_audio=None):
+    content = [build_first_frame_payload(_upload_image_reference(image))]
+
+    if reference_video is not None:
+        content.append(build_video_reference_payload(_upload_video_reference(reference_video)))
+
+    if reference_audio is not None:
+        content.append(build_audio_reference_payload(_upload_audio_reference(reference_audio)))
+
+    return content
 
 
 def _build_first_last_frame_content(first_image, last_image):
@@ -609,7 +651,14 @@ def _build_first_last_frame_content(first_image, last_image):
     ]
 
 
-def _build_asset_model_content(model_asset_uri, outfit_image, extra_reference_image=None, extra_reference_asset_uri=""):
+def _build_asset_model_content(
+    model_asset_uri,
+    outfit_image,
+    extra_reference_image=None,
+    extra_reference_asset_uri="",
+    reference_video=None,
+    reference_audio=None,
+):
     content = [
         build_asset_image_reference_payload(model_asset_uri),
         build_image_reference_payload(_upload_image_reference(outfit_image)),
@@ -621,6 +670,12 @@ def _build_asset_model_content(model_asset_uri, outfit_image, extra_reference_im
 
     if extra_reference_image is not None:
         content.append(build_image_reference_payload(_upload_image_reference(extra_reference_image)))
+
+    if reference_video is not None:
+        content.append(build_video_reference_payload(_upload_video_reference(reference_video)))
+
+    if reference_audio is not None:
+        content.append(build_audio_reference_payload(_upload_audio_reference(reference_audio)))
 
     return content
 
@@ -744,7 +799,19 @@ class SeedanceFirstFrameNode:
     def INPUT_TYPES(cls):
         return _first_frame_inputs()
 
-    def generate(self, model, prompt, resolution, duration, ratio, generate_audio, watermark, image):
+    def generate(
+        self,
+        model,
+        prompt,
+        resolution,
+        duration,
+        ratio,
+        generate_audio,
+        watermark,
+        image,
+        reference_video=None,
+        reference_audio=None,
+    ):
         return _build_generation_result(
             model,
             prompt,
@@ -753,7 +820,11 @@ class SeedanceFirstFrameNode:
             ratio,
             generate_audio,
             watermark,
-            content=_build_first_frame_content(image),
+            content=_build_first_frame_content(
+                image,
+                reference_video=reference_video,
+                reference_audio=reference_audio,
+            ),
             prompt_required=False,
         )
 
@@ -807,6 +878,8 @@ class SeedanceAssetModelNode:
         watermark,
         extra_reference_asset_uri="",
         extra_reference_image=None,
+        reference_video=None,
+        reference_audio=None,
     ):
         return _build_generation_result(
             model,
@@ -821,6 +894,8 @@ class SeedanceAssetModelNode:
                 outfit_image,
                 extra_reference_image=extra_reference_image,
                 extra_reference_asset_uri=extra_reference_asset_uri,
+                reference_video=reference_video,
+                reference_audio=reference_audio,
             ),
             prompt_required=True,
         )

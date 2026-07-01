@@ -37,11 +37,11 @@ The generation nodes now mirror the three official Seedance image/video input mo
 - `Text-to-Video`
   Pure text generation. `prompt` is required.
 - `First-Frame-to-Video`
-  Uses one local `IMAGE` and sends it as `first_frame`.
+  Uses one local `IMAGE` as `first_frame` and accepts optional video/audio references.
 - `First-Last-Frame-to-Video`
   Uses two local `IMAGE` inputs and sends them as `first_frame` and `last_frame`.
 - `Asset Model-to-Video`
-  Uses an `asset://asset-...` human or virtual model asset as `图片1`, an outfit/product image as `图片2`, and generates a model video from the prompt. Optional `extra_reference_asset_uri` can be used as `图片3` for a background, scene, or style asset.
+  Uses an `asset://asset-...` human or virtual model asset as `图片1`, an outfit/product image as `图片2`, and generates a model video from the prompt. It also accepts optional image, video, and audio references.
 - `Upload Image Asset`
   Uploads a local ComfyUI `IMAGE`, or a provided public `source_url`, into Ark's private trusted asset library and returns `asset://asset-...`.
 - `Multimodal-to-Video`
@@ -65,7 +65,7 @@ The generation nodes now mirror the three official Seedance image/video input mo
 - The non-text generation nodes allow an empty `prompt` and omit the text item from `content`.
 - `Multimodal-to-Video` requires at least one reference input and rejects audio-only requests.
 - `Asset Model-to-Video` requires an asset URI in `asset://asset-...` format and an outfit/product image.
-- `Asset Model-to-Video` also accepts optional `extra_reference_asset_uri` for a background, scene, or style asset.
+- `Asset Model-to-Video` also accepts optional image, video, and audio references. Local video/audio files are uploaded to `tmpfiles.org`.
 - `Upload Image Asset` requires Ark Access Key credentials and an existing `GroupId`; it does not create asset groups or run real-person validation.
 - Local image inputs do not use `tmpfiles.org`; they are encoded into the Ark request body.
 - `tmpfiles.org` is still used for local video/audio inputs and for local image asset upload. Files expire after 60 minutes and the upload limit is 100 MB per file.
@@ -209,6 +209,8 @@ Inputs:
 - `generate_audio`
 - `watermark`
 - `image`
+- Optional `reference_video` as ComfyUI `VIDEO`
+- Optional `reference_audio` as ComfyUI `AUDIO`
 
 ### First-Last-Frame-to-Video
 
@@ -239,6 +241,8 @@ Inputs:
 - `watermark`
 - Optional `extra_reference_asset_uri`
 - Optional `extra_reference_image`
+- Optional `reference_video` as ComfyUI `VIDEO`
+- Optional `reference_audio` as ComfyUI `AUDIO`
 
 ### Upload Image Asset
 

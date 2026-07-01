@@ -4,11 +4,13 @@ import os
 import sys
 import tempfile
 import unittest
+import wave
 from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
 import httpx
+import numpy
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -460,6 +462,28 @@ class BackendConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "audio_url must be a valid http or https URL."):
             video_api.build_audio_reference_payload("file:///tmp/test.mp3")
 
+    def test_audio_waveform_is_written_as_pcm_wav_without_torchcodec(self):
+        waveform = numpy.array(
+            [
+                [-1.0, 0.0, 1.0],
+                [0.5, -0.5, 0.25],
+            ],
+            dtype=numpy.float32,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+            temp_path = Path(handle.name)
+
+        try:
+            seedance_nodes._write_audio_waveform_wav(temp_path, waveform, 44100)
+            with wave.open(str(temp_path), "rb") as wav_file:
+                self.assertEqual(wav_file.getnchannels(), 2)
+                self.assertEqual(wav_file.getsampwidth(), 2)
+                self.assertEqual(wav_file.getframerate(), 44100)
+                self.assertEqual(wav_file.getnframes(), 3)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
     def test_wait_for_video_completion_polls_until_completed(self):
         client = FakeVideoClient(
             [
@@ -517,21 +541,39 @@ class BackendConfigTests(unittest.TestCase):
 
         with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
             with mock.patch.object(seedance_nodes, "_upload_image_reference", return_value="https://example.com/first.png"):
-                result = seedance_nodes.SeedanceFirstFrameNode().generate(
-                    "doubao-seedance-2-0-fast-260128",
-                    "",
-                    "720p",
-                    "5",
-                    "adaptive",
-                    True,
-                    False,
-                    image=object(),
-                )
+                with mock.patch.object(
+                    seedance_nodes,
+                    "_upload_video_reference",
+                    return_value="https://example.com/reference.mp4",
+                ):
+                    with mock.patch.object(
+                        seedance_nodes,
+                        "_upload_audio_reference",
+                        return_value="https://example.com/reference.wav",
+                    ):
+                        result = seedance_nodes.SeedanceFirstFrameNode().generate(
+                            "doubao-seedance-2-0-fast-260128",
+                            "",
+                            "720p",
+                            "5",
+                            "adaptive",
+                            True,
+                            False,
+                            image=object(),
+                            reference_video=FakeVideoReference(),
+                            reference_audio={"waveform": "fake-waveform", "sample_rate": 44100},
+                        )
 
         request_payload = fake_client.calls[0][2]["json"]
         self.assertNotIn("prompt", request_payload)
         self.assertNotIn("extra_body", request_payload)
-        self.assertEqual(request_payload["content"][0]["role"], "first_frame")
+        self.assertEqual(
+            [item["role"] for item in request_payload["content"]],
+            ["first_frame", "reference_video", "reference_audio"],
+        )
+        input_types = seedance_nodes.SeedanceFirstFrameNode.INPUT_TYPES()
+        self.assertEqual(input_types["optional"]["reference_video"], ("VIDEO",))
+        self.assertEqual(input_types["optional"]["reference_audio"], ("AUDIO",))
         self.assertEqual(result["result"][1], "video-123")
 
     def test_first_last_frame_node_builds_expected_roles(self):
@@ -590,19 +632,31 @@ class BackendConfigTests(unittest.TestCase):
                 "_upload_image_reference",
                 side_effect=["data:image/png;base64,b3V0Zml0", "data:image/png;base64,ZXh0cmE="],
             ):
-                result = seedance_nodes.SeedanceAssetModelNode().generate(
-                    "doubao-seedance-2-0-fast-260128",
-                    "asset://asset-20260624155748-cb5d4",
-                    "Use image 1 as the model, image 2 as the outfit, and image 3 as the background.",
-                    outfit_image=object(),
-                    resolution="720p",
-                    duration="5",
-                    ratio="adaptive",
-                    generate_audio=True,
-                    watermark=False,
-                    extra_reference_asset_uri="asset://asset-20260625120000-bg001",
-                    extra_reference_image=object(),
-                )
+                with mock.patch.object(
+                    seedance_nodes,
+                    "_upload_video_reference",
+                    return_value="https://example.com/reference.mp4",
+                ):
+                    with mock.patch.object(
+                        seedance_nodes,
+                        "_upload_audio_reference",
+                        return_value="https://example.com/reference.wav",
+                    ):
+                        result = seedance_nodes.SeedanceAssetModelNode().generate(
+                            "doubao-seedance-2-0-fast-260128",
+                            "asset://asset-20260624155748-cb5d4",
+                            "Use image 1 as the model, image 2 as the outfit, and image 3 as the background.",
+                            outfit_image=object(),
+                            resolution="720p",
+                            duration="5",
+                            ratio="adaptive",
+                            generate_audio=True,
+                            watermark=False,
+                            extra_reference_asset_uri="asset://asset-20260625120000-bg001",
+                            extra_reference_image=object(),
+                            reference_video=FakeVideoReference(),
+                            reference_audio={"waveform": "fake-waveform", "sample_rate": 44100},
+                        )
 
         request_payload = fake_client.calls[0][2]["json"]
         self.assertEqual(
@@ -610,7 +664,7 @@ class BackendConfigTests(unittest.TestCase):
             {"type": "text", "text": "Use image 1 as the model, image 2 as the outfit, and image 3 as the background."},
         )
         self.assertEqual(
-            [item["image_url"]["url"] for item in request_payload["content"][1:]],
+            [item["image_url"]["url"] for item in request_payload["content"][1:5]],
             [
                 "asset://asset-20260624155748-cb5d4",
                 "data:image/png;base64,b3V0Zml0",
@@ -620,7 +674,22 @@ class BackendConfigTests(unittest.TestCase):
         )
         self.assertEqual(
             [item["role"] for item in request_payload["content"][1:]],
-            ["reference_image", "reference_image", "reference_image", "reference_image"],
+            [
+                "reference_image",
+                "reference_image",
+                "reference_image",
+                "reference_image",
+                "reference_video",
+                "reference_audio",
+            ],
+        )
+        self.assertEqual(
+            request_payload["content"][-2]["video_url"]["url"],
+            "https://example.com/reference.mp4",
+        )
+        self.assertEqual(
+            request_payload["content"][-1]["audio_url"]["url"],
+            "https://example.com/reference.wav",
         )
         self.assertEqual(result["result"][1], "video-123")
 
@@ -630,6 +699,8 @@ class BackendConfigTests(unittest.TestCase):
         self.assertIn("图片1", default_prompt)
         self.assertIn("图片2", default_prompt)
         self.assertNotIn("asset://", default_prompt)
+        self.assertEqual(input_types["optional"]["reference_video"], ("VIDEO",))
+        self.assertEqual(input_types["optional"]["reference_audio"], ("AUDIO",))
 
     def test_upload_image_asset_node_uses_source_url_and_waits_for_active_asset(self):
         fake_client = FakeAssetClient("ak", "sk")
