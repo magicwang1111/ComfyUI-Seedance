@@ -47,6 +47,8 @@ ENV_KEYS = {
     "ARK_ASSET_POLL_INTERVAL": "",
     "SEEDANCE_ASSET_TIMEOUT": "",
     "ARK_ASSET_TIMEOUT": "",
+    "SEEDANCE_ASSET_WAIT_TIMEOUT": "",
+    "ARK_ASSET_WAIT_TIMEOUT": "",
     "SEEDANCE_ASSET_PROJECT_NAME": "",
     "ARK_PROJECT_NAME": "",
 }
@@ -84,12 +86,21 @@ class FakeVideoClient(FakeResolvedClient):
 
 
 class FakeAssetClient:
-    def __init__(self, access_key_id, secret_access_key, base_url=None, timeout=60, poll_interval=5.0):
+    def __init__(
+        self,
+        access_key_id,
+        secret_access_key,
+        base_url=None,
+        timeout=60,
+        poll_interval=5.0,
+        wait_timeout=900,
+    ):
         self.access_key_id = access_key_id
         self.secret_access_key = secret_access_key
         self.base_url = base_url
         self.timeout = timeout
         self.poll_interval = poll_interval
+        self.wait_timeout = wait_timeout
         self.created_assets = []
         self.closed = False
 
@@ -128,11 +139,12 @@ class FakeVideoReference:
 
 class BackendConfigTests(unittest.TestCase):
     def test_node_mapping_contains_all_generation_and_preview_nodes(self):
-        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 7)
+        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 8)
         self.assertIn("ComfyUI-Seedance Text-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance First-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance First-Last-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Asset Model-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance Trusted Person Asset", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Upload Image Asset", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Multimodal-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Preview Video", seedance_package.NODE_CLASS_MAPPINGS)
@@ -176,6 +188,7 @@ class BackendConfigTests(unittest.TestCase):
                         "asset_project_name": "json-project",
                         "asset_poll_interval": 6.5,
                         "asset_timeout": 95,
+                        "asset_wait_timeout": 700,
                     }
                 ),
                 encoding="utf-8",
@@ -204,6 +217,7 @@ class BackendConfigTests(unittest.TestCase):
             self.assertEqual(asset_client.base_url, "https://json.example.com")
             self.assertEqual(asset_client.timeout, 95)
             self.assertEqual(asset_client.poll_interval, 6.5)
+            self.assertEqual(asset_client.wait_timeout, 700)
             self.assertEqual(asset_project_name, "json-project")
 
     def test_runtime_client_uses_env_when_json_missing(self):
@@ -224,6 +238,7 @@ class BackendConfigTests(unittest.TestCase):
                     "SEEDANCE_ASSET_BASE_URL": "https://asset-env.example.com/",
                     "SEEDANCE_ASSET_POLL_INTERVAL": "7",
                     "SEEDANCE_ASSET_TIMEOUT": "80",
+                    "SEEDANCE_ASSET_WAIT_TIMEOUT": "800",
                     "SEEDANCE_ASSET_PROJECT_NAME": "env-project",
                 },
                 clear=False,
@@ -246,6 +261,7 @@ class BackendConfigTests(unittest.TestCase):
             self.assertEqual(asset_client.base_url, "https://asset-env.example.com")
             self.assertEqual(asset_client.timeout, 80)
             self.assertEqual(asset_client.poll_interval, 7.0)
+            self.assertEqual(asset_client.wait_timeout, 800)
             self.assertEqual(asset_project_name, "env-project")
 
     def test_tmpfiles_url_is_converted_to_direct_download(self):
@@ -288,6 +304,63 @@ class BackendConfigTests(unittest.TestCase):
         self.assertEqual(str(seen_requests[0].url), "https://ark.cn-beijing.volcengineapi.com/?Action=CreateAsset&Version=2024-01-01")
         self.assertIn("HMAC-SHA256 Credential=ak-test/", seen_requests[0].headers["Authorization"])
         self.assertEqual(json.loads(seen_requests[0].content.decode("utf-8"))["AssetType"], "Image")
+
+    def test_asset_client_posts_validation_session_actions(self):
+        seen_requests = []
+
+        def handler(request):
+            seen_requests.append(request)
+            if request.url.params["Action"] == "CreateVisualValidateSession":
+                return httpx.Response(200, json={"Result": {"BytedToken": "token-123", "H5Link": "https://h5.example.com"}})
+            return httpx.Response(200, json={"Result": {"GroupId": "group-123"}})
+
+        client = asset_api.AssetClient(
+            "ak-test",
+            "sk-test",
+            base_url="https://ark.cn-beijing.volcengineapi.com/",
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            session = client.create_visual_validate_session(
+                "https://comfy.example.com/seedance/assets/validation/callback",
+                project_name="project-a",
+            )
+            result = client.get_visual_validate_result("token-123", project_name="project-a")
+        finally:
+            client.close()
+
+        self.assertEqual(session["BytedToken"], "token-123")
+        self.assertEqual(result["GroupId"], "group-123")
+        self.assertEqual(
+            [request.url.params["Action"] for request in seen_requests],
+            ["CreateVisualValidateSession", "GetVisualValidateResult"],
+        )
+        self.assertEqual(
+            json.loads(seen_requests[0].content.decode("utf-8")),
+            {
+                "CallbackURL": "https://comfy.example.com/seedance/assets/validation/callback",
+                "ProjectName": "project-a",
+            },
+        )
+        self.assertEqual(
+            json.loads(seen_requests[1].content.decode("utf-8")),
+            {"BytedToken": "token-123", "ProjectName": "project-a"},
+        )
+
+    def test_asset_wait_has_total_timeout(self):
+        client = asset_api.AssetClient(
+            "ak-test",
+            "sk-test",
+            poll_interval=0,
+            wait_timeout=1,
+        )
+        try:
+            with mock.patch.object(client, "get_asset", return_value={"Status": "Processing"}):
+                with mock.patch.object(asset_api.time, "monotonic", side_effect=[10.0, 11.1]):
+                    with self.assertRaisesRegex(TimeoutError, "Timed out after 1 seconds"):
+                        client.wait_for_asset_active("asset-123")
+        finally:
+            client.close()
 
     def test_asset_failure_message_explains_face_mismatch(self):
         message = asset_api.describe_asset_failure(
@@ -768,6 +841,39 @@ class BackendConfigTests(unittest.TestCase):
                 project_name="default",
                 name="",
                 wait_for_active=False,
+            )
+
+    def test_trusted_person_asset_node_returns_group_id_with_asset(self):
+        fake_client = FakeAssetClient("ak", "sk")
+
+        @contextmanager
+        def fake_asset_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_asset_client", fake_asset_client):
+            result = seedance_nodes.SeedanceTrustedPersonAssetNode().upload(
+                group_id="group-202607020001-test",
+                source_url="https://example.com/person.png",
+                project_name="default",
+                wait_for_active=True,
+            )
+
+        self.assertEqual(
+            result["result"],
+            (
+                "asset://asset-202606250001-test",
+                "group-202607020001-test",
+                "asset-202606250001-test",
+                "Active",
+                "https://example.com/asset.png",
+            ),
+        )
+
+    def test_trusted_person_asset_node_requires_completed_validation(self):
+        with self.assertRaisesRegex(ValueError, "Complete real-person validation"):
+            seedance_nodes.SeedanceTrustedPersonAssetNode().upload(
+                group_id="group-",
+                source_url="https://example.com/person.png",
             )
 
     def test_multimodal_node_builds_mixed_references(self):

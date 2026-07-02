@@ -18,6 +18,7 @@ from .api import (
     DEFAULT_ASSET_BASE_URL,
     DEFAULT_ASSET_POLL_INTERVAL,
     DEFAULT_ASSET_TIMEOUT,
+    DEFAULT_ASSET_WAIT_TIMEOUT,
     DEFAULT_UPLOAD_TIMEOUT,
     IMAGE_DATA_URL_MAX_SIZE_BYTES,
     MODEL_OPTIONS,
@@ -254,6 +255,17 @@ def _resolve_asset_timeout(config_data):
     return DEFAULT_ASSET_TIMEOUT
 
 
+def _resolve_asset_wait_timeout(config_data):
+    if _json_value_present(config_data, "asset_wait_timeout"):
+        return _parse_request_timeout(config_data["asset_wait_timeout"])
+
+    env_value = _load_env_value("SEEDANCE_ASSET_WAIT_TIMEOUT", "ARK_ASSET_WAIT_TIMEOUT")
+    if env_value:
+        return _parse_request_timeout(env_value)
+
+    return DEFAULT_ASSET_WAIT_TIMEOUT
+
+
 def _resolve_asset_project_name(config_data):
     if _json_value_present(config_data, "asset_project_name"):
         return str(config_data["asset_project_name"]).strip()
@@ -288,6 +300,7 @@ def _create_asset_client():
         base_url=_resolve_asset_base_url(config_data),
         timeout=_resolve_asset_timeout(config_data),
         poll_interval=_resolve_asset_poll_interval(config_data),
+        wait_timeout=_resolve_asset_wait_timeout(config_data),
     )
 
 
@@ -515,6 +528,22 @@ def _upload_image_asset_inputs():
     return {
         "required": {
             "group_id": ("STRING", {"default": "group-"}),
+            "source_url": ("STRING", {"default": ""}),
+            "project_name": ("STRING", {"default": DEFAULT_ASSET_PROJECT_NAME}),
+            "name": ("STRING", {"default": ""}),
+            "wait_for_active": ("BOOLEAN", {"default": True}),
+        },
+        "optional": {
+            "image": ("IMAGE",),
+        },
+    }
+
+
+def _trusted_person_asset_inputs():
+    return {
+        "required": {
+            "group_id": ("STRING", {"default": "group-"}),
+            "callback_url": ("STRING", {"default": ""}),
             "source_url": ("STRING", {"default": ""}),
             "project_name": ("STRING", {"default": DEFAULT_ASSET_PROJECT_NAME}),
             "name": ("STRING", {"default": ""}),
@@ -966,6 +995,46 @@ class SeedanceMultimodalNode:
             content=content,
             prompt_required=False,
         )
+
+
+class SeedanceTrustedPersonAssetNode:
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("asset_uri", "group_id", "asset_id", "status", "asset_url")
+    FUNCTION = "upload"
+    CATEGORY = NODE_CATEGORY
+    DESCRIPTION = (
+        "Create a real-person validation session from the node UI, then upload an image "
+        "to the verified Ark Asset Group."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _trusted_person_asset_inputs()
+
+    def upload(
+        self,
+        group_id,
+        callback_url="",
+        source_url="",
+        project_name=DEFAULT_ASSET_PROJECT_NAME,
+        name="",
+        wait_for_active=True,
+        image=None,
+    ):
+        normalized_group_id = str(group_id or "").strip()
+        if not normalized_group_id.startswith("group-") or normalized_group_id == "group-":
+            raise ValueError("Complete real-person validation or provide a valid group_id before uploading.")
+
+        upload_result = _build_asset_upload_result(
+            group_id=normalized_group_id,
+            source_url=source_url,
+            project_name=project_name,
+            name=name,
+            wait_for_active=wait_for_active,
+            image=image,
+        )
+        asset_uri, asset_id, status, asset_url = upload_result["result"]
+        return {"result": (asset_uri, normalized_group_id, asset_id, status, asset_url)}
 
 
 class PreviewVideoNode:

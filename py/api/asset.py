@@ -14,6 +14,7 @@ DEFAULT_ASSET_SERVICE = "ark"
 DEFAULT_ASSET_VERSION = "2024-01-01"
 DEFAULT_ASSET_POLL_INTERVAL = 5.0
 DEFAULT_ASSET_TIMEOUT = 60
+DEFAULT_ASSET_WAIT_TIMEOUT = 900
 ACTIVE_ASSET_STATUS = "active"
 PROCESSING_ASSET_STATUSES = {"processing", "pending", "queued"}
 FAILED_ASSET_STATUSES = {"failed", "error", "rejected"}
@@ -71,6 +72,7 @@ class AssetClient:
         service=DEFAULT_ASSET_SERVICE,
         timeout=DEFAULT_ASSET_TIMEOUT,
         poll_interval=DEFAULT_ASSET_POLL_INTERVAL,
+        wait_timeout=DEFAULT_ASSET_WAIT_TIMEOUT,
         transport=None,
     ):
         self.access_key_id = _clean_required_string(access_key_id, "access_key_id")
@@ -79,6 +81,11 @@ class AssetClient:
         self.region = _clean_required_string(region, "region")
         self.service = _clean_required_string(service, "service")
         self.poll_interval = float(poll_interval)
+        self.wait_timeout = float(wait_timeout)
+        if self.poll_interval < 0:
+            raise ValueError("poll_interval must be greater than or equal to 0.")
+        if self.wait_timeout <= 0:
+            raise ValueError("wait_timeout must be greater than 0.")
         self._client = httpx.Client(timeout=timeout, transport=transport)
 
     def close(self):
@@ -200,6 +207,24 @@ class AssetClient:
             payload["Name"] = str(name).strip()
         return self.request("CreateAsset", payload)
 
+    def create_visual_validate_session(self, callback_url, project_name="default"):
+        return self.request(
+            "CreateVisualValidateSession",
+            {
+                "CallbackURL": _validate_http_url(callback_url, "callback_url"),
+                "ProjectName": _clean_required_string(project_name or "default", "project_name"),
+            },
+        )
+
+    def get_visual_validate_result(self, byted_token, project_name="default"):
+        return self.request(
+            "GetVisualValidateResult",
+            {
+                "BytedToken": _clean_required_string(byted_token, "byted_token"),
+                "ProjectName": _clean_required_string(project_name or "default", "project_name"),
+            },
+        )
+
     def get_asset(self, asset_id, project_name="default"):
         return self.request(
             "GetAsset",
@@ -210,6 +235,8 @@ class AssetClient:
         )
 
     def wait_for_asset_active(self, asset_id, project_name="default"):
+        deadline = time.monotonic() + self.wait_timeout
+
         while True:
             asset_info = self.get_asset(asset_id, project_name=project_name)
             status = str(asset_info.get("Status", "")).strip()
@@ -224,7 +251,13 @@ class AssetClient:
             if normalized_status and normalized_status not in PROCESSING_ASSET_STATUSES:
                 raise RuntimeError(f"Unexpected asset status for {asset_id}: {status}.")
 
-            time.sleep(self.poll_interval)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"Timed out after {self.wait_timeout:g} seconds waiting for asset {asset_id} to become Active."
+                )
+
+            time.sleep(min(self.poll_interval, remaining))
 
 
 def asset_uri_from_id(asset_id):

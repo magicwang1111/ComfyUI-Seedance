@@ -2,12 +2,13 @@
 
 `ComfyUI-Seedance` is a small ComfyUI custom node pack for generating Seedance videos through the Volcengine Ark native Video Generation Task API.
 
-It exposes seven nodes under the `ComfyUI-Seedance` category:
+It exposes eight nodes under the `ComfyUI-Seedance` category:
 
 - `ComfyUI-Seedance Text-to-Video`
 - `ComfyUI-Seedance First-Frame-to-Video`
 - `ComfyUI-Seedance First-Last-Frame-to-Video`
 - `ComfyUI-Seedance Asset Model-to-Video`
+- `ComfyUI-Seedance Trusted Person Asset`
 - `ComfyUI-Seedance Upload Image Asset`
 - `ComfyUI-Seedance Multimodal-to-Video`
 - `ComfyUI-Seedance Preview Video`
@@ -28,6 +29,7 @@ It exposes seven nodes under the `ComfyUI-Seedance` category:
 - Local image references are sent as `data:image/...;base64,...` values.
 - Local video and audio references are uploaded to `tmpfiles.org` public URLs.
 - Image assets can be uploaded to the Ark private trusted asset library through `CreateAsset` / `GetAsset`.
+- Real-person validation can be created and completed from the `Trusted Person Asset` node UI.
 - A standalone `Preview Video` node for explicit playback and saving
 
 ## Mode Split
@@ -44,6 +46,8 @@ The generation nodes now mirror the three official Seedance image/video input mo
   Uses an `asset://asset-...` human or virtual model asset as `图片1`, an outfit/product image as `图片2`, and generates a model video from the prompt. It also accepts optional image, video, and audio references.
 - `Upload Image Asset`
   Uploads a local ComfyUI `IMAGE`, or a provided public `source_url`, into Ark's private trusted asset library and returns `asset://asset-...`.
+- `Trusted Person Asset`
+  Creates the H5 real-person validation session, writes the resulting `GroupId` into the node, then uploads an image into that verified Asset Group.
 - `Multimodal-to-Video`
   Uses reference inputs only:
   - `image_1` through `image_9` become `reference_image`
@@ -67,6 +71,7 @@ The generation nodes now mirror the three official Seedance image/video input mo
 - `Asset Model-to-Video` requires an asset URI in `asset://asset-...` format and an outfit/product image.
 - `Asset Model-to-Video` also accepts optional image, video, and audio references. Local video/audio files are uploaded to `tmpfiles.org`.
 - `Upload Image Asset` requires Ark Access Key credentials and an existing `GroupId`; it does not create asset groups or run real-person validation.
+- `Trusted Person Asset` requires the Seedance advanced creation entitlement and an AK/SK identity with `ArkFullAccess`.
 - Local image inputs do not use `tmpfiles.org`; they are encoded into the Ark request body.
 - `tmpfiles.org` is still used for local video/audio inputs and for local image asset upload. Files expire after 60 minutes and the upload limit is 100 MB per file.
 - The temporary URLs are not exposed in the node UI.
@@ -126,6 +131,20 @@ Outputs:
 
 Local image asset upload first publishes the image to `tmpfiles.org`, because Ark `CreateAsset` requires a public URL. If tmpfiles is unstable on your network, provide a stable `source_url` instead.
 
+## Trusted Person Asset Workflow
+
+Use `ComfyUI-Seedance Trusted Person Asset` when the real-person Asset Group has not been created yet.
+
+1. Keep `project_name` aligned with the project used by the Seedance inference endpoint.
+2. Click `创建真人认证`. The node creates a 30-minute validation session and opens the Ark H5 page.
+3. Complete the validation and return to ComfyUI. The node writes the resulting `group_id` automatically.
+4. Connect an `IMAGE`, or provide `source_url`, and queue the node.
+5. Connect the returned `asset_uri` to `Asset Model-to-Video`.
+
+The default callback targets the current ComfyUI server. Set `callback_url` only when ComfyUI is behind a proxy or must use a different browser-reachable address. The workflow never stores the H5 link or `BytedToken`.
+
+Privacy warning: local asset images still use the existing `tmpfiles.org` bridge. For real-person material, prefer a controlled `source_url`; do not use the local-image path for sensitive production assets unless that public temporary upload is acceptable.
+
 ## Configuration
 
 Create [config.local.json](./config.local.json) in the repository root. Use [config.example.json](./config.example.json) as the template.
@@ -142,7 +161,8 @@ Create [config.local.json](./config.local.json) in the repository root. Use [con
   "asset_base_url": "https://ark.cn-beijing.volcengineapi.com",
   "asset_project_name": "default",
   "asset_poll_interval": 5.0,
-  "asset_timeout": 60
+  "asset_timeout": 60,
+  "asset_wait_timeout": 900
 }
 ```
 
@@ -164,6 +184,7 @@ Supported environment variables:
 - `SEEDANCE_ASSET_PROJECT_NAME`
 - `SEEDANCE_ASSET_POLL_INTERVAL`
 - `SEEDANCE_ASSET_TIMEOUT`
+- `SEEDANCE_ASSET_WAIT_TIMEOUT`
 
 Priority:
 
@@ -262,6 +283,26 @@ Outputs:
 - `status`
 - `asset_url`
 
+### Trusted Person Asset
+
+Inputs:
+
+- `group_id` (filled by the validation controls or provided manually)
+- `callback_url` (optional; blank uses the current ComfyUI server)
+- `source_url`
+- `project_name`
+- `name`
+- `wait_for_active`
+- Optional `image`
+
+Outputs:
+
+- `asset_uri`
+- `group_id`
+- `asset_id`
+- `status`
+- `asset_url`
+
 ### Multimodal-to-Video
 
 Inputs:
@@ -306,6 +347,7 @@ Starter workflow JSON files live in [examples/](./examples):
 - [02_comfyui_seedance_first_frame_workflow.json](./examples/02_comfyui_seedance_first_frame_workflow.json)
 - [03_comfyui_seedance_first_last_frame_workflow.json](./examples/03_comfyui_seedance_first_last_frame_workflow.json)
 - [04_comfyui_seedance_multimodal_mixed_workflow.json](./examples/04_comfyui_seedance_multimodal_mixed_workflow.json)
+- [05_comfyui_seedance_trusted_person_asset_workflow.json](./examples/05_comfyui_seedance_trusted_person_asset_workflow.json)
 
 See [examples/README.md](./examples/README.md) for a quick description of each one.
 

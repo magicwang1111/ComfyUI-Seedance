@@ -9,5 +9,6 @@
   "asset_base_url": "https://ark.cn-beijing.volcengineapi.com",
   "asset_project_name": "default",
   "asset_poll_interval": 5.0,
-  "asset_timeout": 60
+  "asset_timeout": 60,
+  "asset_wait_timeout": 900
 }
