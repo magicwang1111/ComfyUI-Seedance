@@ -1,0 +1,90 @@
+{
+  "last_node_id": 1,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "ComfyUI-Seedance Multimodal-to-Video",
+      "pos": [
+        300,
+        220
+      ],
+      "size": {
+        "0": 520,
+        "1": 640
+      },
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "url",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "video_id",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "file_path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ComfyUI-Seedance Multimodal-to-Video"
+      },
+      "widgets_values": [
+        "doubao-seedance-2-0-fast-260128",
+        "图片1中的人物参考视频1的动作节奏，并根据音频1的语气生成短视频。",
+        "720p",
+        "5",
+        "adaptive",
+        true,
+        false,
+        "",
+        "asset://asset-image-1",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "asset://asset-video-1",
+        "",
+        "",
+        "",
+        "asset://asset-audio-1",
+        "",
+        ""
+      ]
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1.0,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}

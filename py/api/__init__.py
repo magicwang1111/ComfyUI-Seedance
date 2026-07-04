@@ -2,13 +2,23 @@ from .asset import (
     AssetAPIError,
     AssetClient,
     DEFAULT_ASSET_BASE_URL,
+    DEFAULT_ASSET_GROUP_TYPE,
     DEFAULT_ASSET_POLL_INTERVAL,
     DEFAULT_ASSET_TIMEOUT,
     DEFAULT_ASSET_WAIT_TIMEOUT,
     asset_uri_from_id,
 )
 from .client import Client, VideoAPIError
-from .upload import DEFAULT_UPLOAD_TIMEOUT, IMAGE_DATA_URL_MAX_SIZE_BYTES, file_to_data_url, upload_file_to_tmpfiles
+from .upload import (
+    DEFAULT_OSS_SIGNED_URL_EXPIRES,
+    DEFAULT_UPLOAD_TIMEOUT,
+    IMAGE_DATA_URL_MAX_SIZE_BYTES,
+    file_to_data_url,
+    is_oss_configured,
+    upload_file_to_oss,
+    upload_file_to_public_url,
+    upload_file_to_tmpfiles,
+)
 from .video import (
     DURATION_OPTIONS,
     MODEL_OPTIONS,
@@ -33,9 +43,11 @@ __all__ = [
     "AssetAPIError",
     "AssetClient",
     "DEFAULT_ASSET_BASE_URL",
+    "DEFAULT_ASSET_GROUP_TYPE",
     "DEFAULT_ASSET_POLL_INTERVAL",
     "DEFAULT_ASSET_TIMEOUT",
     "DEFAULT_ASSET_WAIT_TIMEOUT",
+    "DEFAULT_OSS_SIGNED_URL_EXPIRES",
     "DEFAULT_UPLOAD_TIMEOUT",
     "DURATION_OPTIONS",
     "IMAGE_DATA_URL_MAX_SIZE_BYTES",
@@ -55,7 +67,10 @@ __all__ = [
     "extract_result_video_url",
     "extract_task_id",
     "file_to_data_url",
+    "is_oss_configured",
     "submit_video_generation",
+    "upload_file_to_oss",
+    "upload_file_to_public_url",
     "upload_file_to_tmpfiles",
     "wait_for_video_completion",
 ]

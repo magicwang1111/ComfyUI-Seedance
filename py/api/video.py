@@ -81,6 +81,13 @@ def _validate_remote_url(value, field_name):
     return normalized
 
 
+def _validate_remote_or_asset_url(value, field_name):
+    normalized = str(value or "").strip()
+    if normalized.startswith("asset://"):
+        return _validate_asset_uri(normalized, field_name)
+    return _validate_remote_url(value, field_name)
+
+
 def _validate_asset_uri(value, field_name="asset_uri"):
     normalized = str(value or "").strip()
     if not normalized:
@@ -103,7 +110,7 @@ def _build_reference_payload(reference_type, role, url, field_name):
     if reference_type == "image_url":
         validated_url = _validate_image_url(url)
     else:
-        validated_url = _validate_remote_url(url, field_name)
+        validated_url = _validate_remote_or_asset_url(url, field_name)
     return {
         "type": reference_type,
         "role": role,

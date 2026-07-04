@@ -35,6 +35,12 @@ ENV_KEYS = {
     "SEEDANCE_POLL_INTERVAL": "",
     "SEEDANCE_REQUEST_TIMEOUT": "",
     "SEEDANCE_UPLOAD_TIMEOUT": "",
+    "OSS_ENDPOINT": "",
+    "OSS_ACCESS_KEY_ID": "",
+    "OSS_ACCESS_KEY_SECRET": "",
+    "OSS_BUCKET": "",
+    "OSS_PREFIX": "",
+    "OSS_SIGNED_URL_EXPIRES": "",
     "ARK_ACCESS_KEY_ID": "",
     "VOLCENGINE_ACCESS_KEY_ID": "",
     "VOLC_ACCESS_KEY_ID": "",
@@ -102,7 +108,19 @@ class FakeAssetClient:
         self.poll_interval = poll_interval
         self.wait_timeout = wait_timeout
         self.created_assets = []
+        self.created_groups = []
         self.closed = False
+
+    def create_asset_group(self, name, description="", group_type="AIGC", project_name="default"):
+        self.created_groups.append(
+            {
+                "name": name,
+                "description": description,
+                "group_type": group_type,
+                "project_name": project_name,
+            }
+        )
+        return {"Id": "group-202606250001-test"}
 
     def create_asset(self, group_id, source_url, asset_type="Image", project_name="default", name=""):
         self.created_assets.append(
@@ -115,6 +133,17 @@ class FakeAssetClient:
             }
         )
         return {"Id": "asset-202606250001-test", "Status": "Processing"}
+
+    def get_asset(self, asset_id, project_name="default"):
+        return {
+            "Id": asset_id,
+            "GroupId": "group-202606250001-test",
+            "AssetType": "Image",
+            "Status": "Active",
+            "URL": "https://example.com/asset.png",
+            "Name": "asset-name",
+            "ProjectName": project_name,
+        }
 
     def wait_for_asset_active(self, asset_id, project_name="default"):
         return {
@@ -139,11 +168,14 @@ class FakeVideoReference:
 
 class BackendConfigTests(unittest.TestCase):
     def test_node_mapping_contains_all_generation_and_preview_nodes(self):
-        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 8)
+        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 11)
         self.assertIn("ComfyUI-Seedance Text-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance First-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance First-Last-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Asset Model-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance Create Asset Group", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance Upload Asset", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance Get Asset", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Trusted Person Asset", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Upload Image Asset", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Multimodal-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
@@ -182,6 +214,12 @@ class BackendConfigTests(unittest.TestCase):
                         "poll_interval": 12.5,
                         "request_timeout": 90,
                         "upload_timeout": 140,
+                        "oss_endpoint": "oss-cn-hangzhou.aliyuncs.com",
+                        "oss_access_key_id": "oss-ak",
+                        "oss_access_key_secret": "oss-sk",
+                        "oss_bucket": "bucket-a",
+                        "oss_prefix": "seedance/tmp",
+                        "oss_signed_url_expires": 1800,
                         "access_key_id": "json-ak",
                         "secret_access_key": "json-sk",
                         "asset_base_url": "https://json.example.com",
@@ -204,6 +242,7 @@ class BackendConfigTests(unittest.TestCase):
                         with mock.patch.object(seedance_nodes, "AssetClient", FakeAssetClient):
                             client = seedance_nodes._create_runtime_client()
                             upload_timeout = seedance_nodes._create_upload_timeout()
+                            public_upload_config = seedance_nodes._create_public_upload_config()
                             asset_client = seedance_nodes._create_asset_client()
                             asset_project_name = seedance_nodes._create_asset_project_name()
 
@@ -212,6 +251,17 @@ class BackendConfigTests(unittest.TestCase):
             self.assertEqual(client.base_url, "https://json.example.com/api/v3")
             self.assertEqual(client.poll_interval, 12.5)
             self.assertEqual(upload_timeout, 140)
+            self.assertEqual(
+                public_upload_config,
+                {
+                    "oss_endpoint": "oss-cn-hangzhou.aliyuncs.com",
+                    "oss_access_key_id": "oss-ak",
+                    "oss_access_key_secret": "oss-sk",
+                    "oss_bucket": "bucket-a",
+                    "oss_prefix": "seedance/tmp",
+                    "oss_signed_url_expires": 1800,
+                },
+            )
             self.assertEqual(asset_client.access_key_id, "json-ak")
             self.assertEqual(asset_client.secret_access_key, "json-sk")
             self.assertEqual(asset_client.base_url, "https://json.example.com")
@@ -233,6 +283,12 @@ class BackendConfigTests(unittest.TestCase):
                     "SEEDANCE_POLL_INTERVAL": "20",
                     "SEEDANCE_REQUEST_TIMEOUT": "75",
                     "SEEDANCE_UPLOAD_TIMEOUT": "150",
+                    "OSS_ENDPOINT": "oss-cn-beijing.aliyuncs.com",
+                    "OSS_ACCESS_KEY_ID": "env-oss-ak",
+                    "OSS_ACCESS_KEY_SECRET": "env-oss-sk",
+                    "OSS_BUCKET": "env-bucket",
+                    "OSS_PREFIX": "env-prefix",
+                    "OSS_SIGNED_URL_EXPIRES": "2400",
                     "ARK_ACCESS_KEY_ID": "env-ak",
                     "ARK_SECRET_ACCESS_KEY": "env-sk",
                     "SEEDANCE_ASSET_BASE_URL": "https://asset-env.example.com/",
@@ -248,6 +304,7 @@ class BackendConfigTests(unittest.TestCase):
                         with mock.patch.object(seedance_nodes, "AssetClient", FakeAssetClient):
                             client = seedance_nodes._create_runtime_client()
                             upload_timeout = seedance_nodes._create_upload_timeout()
+                            public_upload_config = seedance_nodes._create_public_upload_config()
                             asset_client = seedance_nodes._create_asset_client()
                             asset_project_name = seedance_nodes._create_asset_project_name()
 
@@ -256,6 +313,17 @@ class BackendConfigTests(unittest.TestCase):
             self.assertEqual(client.base_url, "https://env.example.com/api/v3")
             self.assertEqual(client.poll_interval, 20.0)
             self.assertEqual(upload_timeout, 150)
+            self.assertEqual(
+                public_upload_config,
+                {
+                    "oss_endpoint": "oss-cn-beijing.aliyuncs.com",
+                    "oss_access_key_id": "env-oss-ak",
+                    "oss_access_key_secret": "env-oss-sk",
+                    "oss_bucket": "env-bucket",
+                    "oss_prefix": "env-prefix",
+                    "oss_signed_url_expires": 2400,
+                },
+            )
             self.assertEqual(asset_client.access_key_id, "env-ak")
             self.assertEqual(asset_client.secret_access_key, "env-sk")
             self.assertEqual(asset_client.base_url, "https://asset-env.example.com")
@@ -269,6 +337,53 @@ class BackendConfigTests(unittest.TestCase):
             upload_module._normalize_tmpfiles_download_url("http://tmpfiles.org/123/example.jpg"),
             "https://tmpfiles.org/dl/123/example.jpg",
         )
+
+    def test_oss_object_key_uses_prefix_and_extension(self):
+        object_key = upload_module._build_oss_object_key(
+            "seedance/tmp",
+            "clip.mp4",
+            now=1700000000,
+            token="abc12345",
+        )
+        self.assertEqual(object_key, "seedance/tmp/2023/11/14/1700000000-abc12345.mp4")
+
+    def test_upload_file_to_public_url_prefers_oss_when_configured(self):
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as handle:
+            temp_path = Path(handle.name)
+            handle.write(b"video-bytes")
+
+        try:
+            config = {
+                "oss_endpoint": "oss-cn-hangzhou.aliyuncs.com",
+                "oss_access_key_id": "oss-ak",
+                "oss_access_key_secret": "oss-sk",
+                "oss_bucket": "bucket-a",
+                "oss_prefix": "seedance/tmp",
+                "oss_signed_url_expires": 1800,
+            }
+            with mock.patch.object(upload_module, "upload_file_to_oss", return_value="https://oss.example.com/file") as upload_oss:
+                with mock.patch.object(upload_module, "upload_file_to_tmpfiles") as upload_tmpfiles:
+                    result = upload_module.upload_file_to_public_url(temp_path, public_upload_config=config)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+        self.assertEqual(result, "https://oss.example.com/file")
+        upload_oss.assert_called_once()
+        upload_tmpfiles.assert_not_called()
+
+    def test_upload_file_to_public_url_falls_back_to_tmpfiles(self):
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+            temp_path = Path(handle.name)
+            handle.write(b"image-bytes")
+
+        try:
+            with mock.patch.object(upload_module, "upload_file_to_tmpfiles", return_value="https://tmpfiles.org/dl/1/file.png") as upload_tmpfiles:
+                result = upload_module.upload_file_to_public_url(temp_path, public_upload_config={})
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+        self.assertEqual(result, "https://tmpfiles.org/dl/1/file.png")
+        upload_tmpfiles.assert_called_once()
 
     def test_client_normalizes_base_url(self):
         client = client_module.Client("test-key", base_url="https://ark.cn-beijing.volces.com/api/v3/")
@@ -304,6 +419,41 @@ class BackendConfigTests(unittest.TestCase):
         self.assertEqual(str(seen_requests[0].url), "https://ark.cn-beijing.volcengineapi.com/?Action=CreateAsset&Version=2024-01-01")
         self.assertIn("HMAC-SHA256 Credential=ak-test/", seen_requests[0].headers["Authorization"])
         self.assertEqual(json.loads(seen_requests[0].content.decode("utf-8"))["AssetType"], "Image")
+
+    def test_asset_client_posts_create_asset_group_request(self):
+        seen_requests = []
+
+        def handler(request):
+            seen_requests.append(request)
+            return httpx.Response(200, json={"Result": {"Id": "group-123"}})
+
+        client = asset_api.AssetClient(
+            "ak-test",
+            "sk-test",
+            base_url="https://ark.cn-beijing.volcengineapi.com/",
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            result = client.create_asset_group(
+                "group-name",
+                description="group description",
+                group_type="AIGC",
+                project_name="project-a",
+            )
+        finally:
+            client.close()
+
+        self.assertEqual(result["Id"], "group-123")
+        self.assertEqual(str(seen_requests[0].url), "https://ark.cn-beijing.volcengineapi.com/?Action=CreateAssetGroup&Version=2024-01-01")
+        self.assertEqual(
+            json.loads(seen_requests[0].content.decode("utf-8")),
+            {
+                "Name": "group-name",
+                "Description": "group description",
+                "GroupType": "AIGC",
+                "ProjectName": "project-a",
+            },
+        )
 
     def test_asset_client_posts_validation_session_actions(self):
         seen_requests = []
@@ -531,9 +681,17 @@ class BackendConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "video_url must be a valid http or https URL."):
             video_api.build_video_reference_payload("not-a-url")
 
+    def test_video_reference_accepts_asset_uri(self):
+        payload = video_api.build_video_reference_payload("asset://asset-20260624155748-cb5d4")
+        self.assertEqual(payload["video_url"]["url"], "asset://asset-20260624155748-cb5d4")
+
     def test_audio_reference_rejects_invalid_url(self):
         with self.assertRaisesRegex(ValueError, "audio_url must be a valid http or https URL."):
             video_api.build_audio_reference_payload("file:///tmp/test.mp3")
+
+    def test_audio_reference_accepts_asset_uri(self):
+        payload = video_api.build_audio_reference_payload("asset://asset-20260624155748-cb5d4")
+        self.assertEqual(payload["audio_url"]["url"], "asset://asset-20260624155748-cb5d4")
 
     def test_audio_waveform_is_written_as_pcm_wav_without_torchcodec(self):
         waveform = numpy.array(
@@ -647,6 +805,7 @@ class BackendConfigTests(unittest.TestCase):
         input_types = seedance_nodes.SeedanceFirstFrameNode.INPUT_TYPES()
         self.assertEqual(input_types["optional"]["reference_video"], ("VIDEO",))
         self.assertEqual(input_types["optional"]["reference_audio"], ("AUDIO",))
+        self.assertEqual(input_types["optional"]["image_asset_uri"][0], "STRING")
         self.assertEqual(result["result"][1], "video-123")
 
     def test_first_last_frame_node_builds_expected_roles(self):
@@ -685,7 +844,56 @@ class BackendConfigTests(unittest.TestCase):
             [item["role"] for item in request_payload["content"][1:]],
             ["first_frame", "last_frame"],
         )
+        input_types = seedance_nodes.SeedanceFirstLastFrameNode.INPUT_TYPES()
+        self.assertEqual(input_types["optional"]["first_image_asset_uri"][0], "STRING")
         self.assertEqual(result["result"][1], "video-123")
+
+    def test_first_frame_node_accepts_asset_uri_inputs(self):
+        fake_client = FakeVideoClient(
+            [
+                {"id": "video-123"},
+                {"id": "video-123", "status": "succeeded", "content": {"video_url": "https://example.com/result.mp4"}},
+            ]
+        )
+
+        @contextmanager
+        def fake_runtime_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
+            result = seedance_nodes.SeedanceFirstFrameNode().generate(
+                "doubao-seedance-2-0-fast-260128",
+                "",
+                "720p",
+                "5",
+                "adaptive",
+                True,
+                False,
+                image_asset_uri="asset://asset-image-1",
+                reference_video_asset_uri="asset://asset-video-1",
+                reference_audio_asset_uri="asset://asset-audio-1",
+            )
+
+        request_payload = fake_client.calls[0][2]["json"]
+        self.assertEqual(
+            [item[item["type"]]["url"] for item in request_payload["content"]],
+            ["asset://asset-image-1", "asset://asset-video-1", "asset://asset-audio-1"],
+        )
+        self.assertEqual(result["result"][1], "video-123")
+
+    def test_first_frame_node_rejects_conflicting_image_inputs(self):
+        with self.assertRaisesRegex(ValueError, "image and image_asset_uri cannot both be provided"):
+            seedance_nodes.SeedanceFirstFrameNode().generate(
+                "doubao-seedance-2-0-fast-260128",
+                "",
+                "720p",
+                "5",
+                "adaptive",
+                True,
+                False,
+                image=object(),
+                image_asset_uri="asset://asset-image-1",
+            )
 
     def test_asset_model_node_builds_asset_and_outfit_references_in_order(self):
         fake_client = FakeVideoClient(
@@ -766,6 +974,40 @@ class BackendConfigTests(unittest.TestCase):
         )
         self.assertEqual(result["result"][1], "video-123")
 
+    def test_asset_model_node_accepts_asset_uri_outfit_and_media_references(self):
+        fake_client = FakeVideoClient(
+            [
+                {"id": "video-123"},
+                {"id": "video-123", "status": "succeeded", "content": {"video_url": "https://example.com/result.mp4"}},
+            ]
+        )
+
+        @contextmanager
+        def fake_runtime_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
+            result = seedance_nodes.SeedanceAssetModelNode().generate(
+                "doubao-seedance-2-0-fast-260128",
+                "asset://asset-model-1",
+                "Use image 1 as the model and image 2 as the outfit.",
+                resolution="720p",
+                duration="5",
+                ratio="adaptive",
+                generate_audio=True,
+                watermark=False,
+                outfit_asset_uri="asset://asset-outfit-1",
+                reference_video_asset_uri="asset://asset-video-1",
+                reference_audio_asset_uri="asset://asset-audio-1",
+            )
+
+        request_payload = fake_client.calls[0][2]["json"]
+        self.assertEqual(
+            [item[item["type"]]["url"] for item in request_payload["content"][1:]],
+            ["asset://asset-model-1", "asset://asset-outfit-1", "asset://asset-video-1", "asset://asset-audio-1"],
+        )
+        self.assertEqual(result["result"][1], "video-123")
+
     def test_asset_model_default_prompt_uses_image_numbers_not_asset_id(self):
         input_types = seedance_nodes.SeedanceAssetModelNode.INPUT_TYPES()
         default_prompt = input_types["required"]["prompt"][1]["default"]
@@ -774,6 +1016,28 @@ class BackendConfigTests(unittest.TestCase):
         self.assertNotIn("asset://", default_prompt)
         self.assertEqual(input_types["optional"]["reference_video"], ("VIDEO",))
         self.assertEqual(input_types["optional"]["reference_audio"], ("AUDIO",))
+        self.assertEqual(input_types["optional"]["outfit_asset_uri"][0], "STRING")
+
+    def test_create_asset_group_node_returns_group_metadata(self):
+        fake_client = FakeAssetClient("ak", "sk")
+
+        @contextmanager
+        def fake_asset_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_asset_client", fake_asset_client):
+            result = seedance_nodes.SeedanceCreateAssetGroupNode().create(
+                name="virtual-person-a",
+                description="test group",
+                project_name="default",
+                group_type="AIGC",
+            )
+
+        self.assertEqual(fake_client.created_groups[0]["name"], "virtual-person-a")
+        self.assertEqual(
+            result["result"],
+            ("group-202606250001-test", "default", "AIGC", "virtual-person-a"),
+        )
 
     def test_upload_image_asset_node_uses_source_url_and_waits_for_active_asset(self):
         fake_client = FakeAssetClient("ak", "sk")
@@ -842,6 +1106,66 @@ class BackendConfigTests(unittest.TestCase):
                 name="",
                 wait_for_active=False,
             )
+
+    def test_upload_asset_node_supports_video_asset_type(self):
+        fake_client = FakeAssetClient("ak", "sk")
+
+        @contextmanager
+        def fake_asset_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_asset_client", fake_asset_client):
+            with mock.patch.object(seedance_nodes, "_upload_video_file", return_value="https://oss.example.com/video.mp4"):
+                result = seedance_nodes.SeedanceUploadAssetNode().upload(
+                    group_id="group-202606250001-test",
+                    asset_type="Video",
+                    source_url="",
+                    project_name="default",
+                    name="demo-video",
+                    wait_for_active=False,
+                    video=FakeVideoReference(),
+                )
+
+        self.assertEqual(fake_client.created_assets[0]["asset_type"], "Video")
+        self.assertEqual(result["result"][1], "group-202606250001-test")
+        self.assertEqual(result["result"][3], "Video")
+
+    def test_upload_asset_node_rejects_mismatched_local_input(self):
+        with self.assertRaisesRegex(ValueError, "asset_type=Audio only accepts the audio input"):
+            seedance_nodes.SeedanceUploadAssetNode().upload(
+                group_id="group-202606250001-test",
+                asset_type="Audio",
+                source_url="",
+                project_name="default",
+                name="demo-audio",
+                wait_for_active=False,
+                image=object(),
+            )
+
+    def test_get_asset_node_returns_asset_metadata(self):
+        fake_client = FakeAssetClient("ak", "sk")
+
+        @contextmanager
+        def fake_asset_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_asset_client", fake_asset_client):
+            result = seedance_nodes.SeedanceGetAssetNode().get(
+                asset_id="asset-202606250001-test",
+                project_name="default",
+            )
+
+        self.assertEqual(
+            result["result"],
+            (
+                "asset://asset-202606250001-test",
+                "group-202606250001-test",
+                "Image",
+                "Active",
+                "https://example.com/asset.png",
+                "asset-name",
+            ),
+        )
 
     def test_trusted_person_asset_node_returns_group_id_with_asset(self):
         fake_client = FakeAssetClient("ak", "sk")
@@ -928,6 +1252,53 @@ class BackendConfigTests(unittest.TestCase):
                 "adaptive",
                 True,
                 False,
+            )
+
+    def test_multimodal_node_accepts_asset_uri_references(self):
+        fake_client = FakeVideoClient(
+            [
+                {"id": "video-123"},
+                {"id": "video-123", "status": "succeeded", "content": {"video_url": "https://example.com/result.mp4"}},
+            ]
+        )
+
+        @contextmanager
+        def fake_runtime_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
+            result = seedance_nodes.SeedanceMultimodalNode().generate(
+                "doubao-seedance-2-0-fast-260128",
+                "",
+                "720p",
+                "5",
+                "adaptive",
+                True,
+                False,
+                image_asset_uri_1="asset://asset-image-1",
+                video_asset_uri_1="asset://asset-video-1",
+                audio_asset_uri_1="asset://asset-audio-1",
+            )
+
+        request_payload = fake_client.calls[0][2]["json"]
+        self.assertEqual(
+            [item[item["type"]]["url"] for item in request_payload["content"]],
+            ["asset://asset-image-1", "asset://asset-video-1", "asset://asset-audio-1"],
+        )
+        self.assertEqual(result["result"][1], "video-123")
+
+    def test_multimodal_node_rejects_conflicting_local_and_asset_inputs(self):
+        with self.assertRaisesRegex(ValueError, "image_1 and image_asset_uri_1 cannot both be provided"):
+            seedance_nodes.SeedanceMultimodalNode().generate(
+                "doubao-seedance-2-0-fast-260128",
+                "",
+                "720p",
+                "5",
+                "adaptive",
+                True,
+                False,
+                image_1=object(),
+                image_asset_uri_1="asset://asset-image-1",
             )
 
     def test_multimodal_node_rejects_audio_only(self):

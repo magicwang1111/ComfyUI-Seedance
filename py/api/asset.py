@@ -18,6 +18,7 @@ DEFAULT_ASSET_WAIT_TIMEOUT = 900
 ACTIVE_ASSET_STATUS = "active"
 PROCESSING_ASSET_STATUSES = {"processing", "pending", "queued"}
 FAILED_ASSET_STATUSES = {"failed", "error", "rejected"}
+DEFAULT_ASSET_GROUP_TYPE = "AIGC"
 
 
 class AssetAPIError(RuntimeError):
@@ -196,6 +197,18 @@ class AssetClient:
             return response_payload["Result"]
         return response_payload
 
+    def create_asset_group(self, name, description="", group_type=DEFAULT_ASSET_GROUP_TYPE, project_name="default"):
+        payload = {
+            "Name": _clean_required_string(name, "name"),
+            "ProjectName": _clean_required_string(project_name or "default", "project_name"),
+        }
+        normalized_group_type = str(group_type or DEFAULT_ASSET_GROUP_TYPE).strip()
+        if normalized_group_type:
+            payload["GroupType"] = normalized_group_type
+        if str(description or "").strip():
+            payload["Description"] = str(description).strip()
+        return self.request("CreateAssetGroup", payload)
+
     def create_asset(self, group_id, source_url, asset_type="Image", project_name="default", name=""):
         payload = {
             "GroupId": _clean_required_string(group_id, "group_id"),
@@ -230,6 +243,15 @@ class AssetClient:
             "GetAsset",
             {
                 "Id": _clean_required_string(asset_id, "asset_id"),
+                "ProjectName": _clean_required_string(project_name or "default", "project_name"),
+            },
+        )
+
+    def get_asset_group(self, group_id, project_name="default"):
+        return self.request(
+            "GetAssetGroup",
+            {
+                "Id": _clean_required_string(group_id, "group_id"),
                 "ProjectName": _clean_required_string(project_name or "default", "project_name"),
             },
         )

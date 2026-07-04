@@ -16,9 +16,11 @@ from .api import (
     AssetClient,
     Client,
     DEFAULT_ASSET_BASE_URL,
+    DEFAULT_ASSET_GROUP_TYPE,
     DEFAULT_ASSET_POLL_INTERVAL,
     DEFAULT_ASSET_TIMEOUT,
     DEFAULT_ASSET_WAIT_TIMEOUT,
+    DEFAULT_OSS_SIGNED_URL_EXPIRES,
     DEFAULT_UPLOAD_TIMEOUT,
     IMAGE_DATA_URL_MAX_SIZE_BYTES,
     MODEL_OPTIONS,
@@ -38,7 +40,7 @@ from .api import (
     extract_task_id,
     file_to_data_url,
     submit_video_generation,
-    upload_file_to_tmpfiles,
+    upload_file_to_public_url,
     wait_for_video_completion,
 )
 
@@ -53,6 +55,7 @@ DEFAULT_POLL_INTERVAL = 15.0
 DEFAULT_REQUEST_TIMEOUT = 60
 DEFAULT_UPLOAD_TIMEOUT_SECONDS = DEFAULT_UPLOAD_TIMEOUT
 DEFAULT_ASSET_PROJECT_NAME = "default"
+ASSET_TYPE_OPTIONS = ["Image", "Video", "Audio"]
 DEFAULT_ASSET_MODEL_PROMPT = (
     "图片1中的模特穿上图片2中的服装，保持图片1的人脸身份、发型和身材特征一致，"
     "服装款式、颜色、材质严格参考图片2。生成电商模特展示视频，人物自然站立/转身展示服装，"
@@ -292,6 +295,64 @@ def _create_upload_timeout():
     return _resolve_upload_timeout(config_data)
 
 
+def _resolve_oss_endpoint(config_data):
+    if _json_value_present(config_data, "oss_endpoint"):
+        return str(config_data["oss_endpoint"]).strip()
+
+    return _load_env_value("OSS_ENDPOINT")
+
+
+def _resolve_oss_access_key_id(config_data):
+    if _json_value_present(config_data, "oss_access_key_id"):
+        return str(config_data["oss_access_key_id"]).strip()
+
+    return _load_env_value("OSS_ACCESS_KEY_ID")
+
+
+def _resolve_oss_access_key_secret(config_data):
+    if _json_value_present(config_data, "oss_access_key_secret"):
+        return str(config_data["oss_access_key_secret"]).strip()
+
+    return _load_env_value("OSS_ACCESS_KEY_SECRET")
+
+
+def _resolve_oss_bucket(config_data):
+    if _json_value_present(config_data, "oss_bucket"):
+        return str(config_data["oss_bucket"]).strip()
+
+    return _load_env_value("OSS_BUCKET")
+
+
+def _resolve_oss_prefix(config_data):
+    if _json_value_present(config_data, "oss_prefix"):
+        return str(config_data["oss_prefix"]).strip()
+
+    return _load_env_value("OSS_PREFIX")
+
+
+def _resolve_oss_signed_url_expires(config_data):
+    if _json_value_present(config_data, "oss_signed_url_expires"):
+        return _parse_request_timeout(config_data["oss_signed_url_expires"])
+
+    env_value = _load_env_value("OSS_SIGNED_URL_EXPIRES")
+    if env_value:
+        return _parse_request_timeout(env_value)
+
+    return DEFAULT_OSS_SIGNED_URL_EXPIRES
+
+
+def _create_public_upload_config():
+    config_data = _load_json_config()
+    return {
+        "oss_endpoint": _resolve_oss_endpoint(config_data),
+        "oss_access_key_id": _resolve_oss_access_key_id(config_data),
+        "oss_access_key_secret": _resolve_oss_access_key_secret(config_data),
+        "oss_bucket": _resolve_oss_bucket(config_data),
+        "oss_prefix": _resolve_oss_prefix(config_data),
+        "oss_signed_url_expires": _resolve_oss_signed_url_expires(config_data),
+    }
+
+
 def _create_asset_client():
     config_data = _load_json_config()
     return AssetClient(
@@ -470,10 +531,13 @@ def _multimodal_optional_inputs():
 
     for index in range(1, 10):
         inputs[f"image_{index}"] = ("IMAGE",)
+        inputs[f"image_asset_uri_{index}"] = ("STRING", {"default": ""})
 
     for index in range(1, 4):
         inputs[f"video_{index}"] = ("VIDEO",)
+        inputs[f"video_asset_uri_{index}"] = ("STRING", {"default": ""})
         inputs[f"audio_{index}"] = ("AUDIO",)
+        inputs[f"audio_asset_uri_{index}"] = ("STRING", {"default": ""})
 
     return inputs
 
@@ -482,11 +546,14 @@ def _first_frame_inputs():
     return {
         "required": {
             **_common_generation_inputs(),
-            "image": ("IMAGE",),
         },
         "optional": {
+            "image": ("IMAGE",),
+            "image_asset_uri": ("STRING", {"default": ""}),
             "reference_video": ("VIDEO",),
+            "reference_video_asset_uri": ("STRING", {"default": ""}),
             "reference_audio": ("AUDIO",),
+            "reference_audio_asset_uri": ("STRING", {"default": ""}),
         },
     }
 
@@ -495,9 +562,13 @@ def _first_last_frame_inputs():
     return {
         "required": {
             **_common_generation_inputs(),
+        },
+        "optional": {
             "first_image": ("IMAGE",),
+            "first_image_asset_uri": ("STRING", {"default": ""}),
             "last_image": ("IMAGE",),
-        }
+            "last_image_asset_uri": ("STRING", {"default": ""}),
+        },
     }
 
 
@@ -508,7 +579,6 @@ def _asset_model_inputs():
             "model": common_inputs["model"],
             "model_asset_uri": ("STRING", {"default": "asset://asset-"}),
             "prompt": ("STRING", {"multiline": True, "default": DEFAULT_ASSET_MODEL_PROMPT}),
-            "outfit_image": ("IMAGE",),
             "resolution": common_inputs["resolution"],
             "duration": common_inputs["duration"],
             "ratio": common_inputs["ratio"],
@@ -516,10 +586,43 @@ def _asset_model_inputs():
             "watermark": common_inputs["watermark"],
         },
         "optional": {
+            "outfit_image": ("IMAGE",),
+            "outfit_asset_uri": ("STRING", {"default": ""}),
             "extra_reference_asset_uri": ("STRING", {"default": ""}),
             "extra_reference_image": ("IMAGE",),
             "reference_video": ("VIDEO",),
+            "reference_video_asset_uri": ("STRING", {"default": ""}),
             "reference_audio": ("AUDIO",),
+            "reference_audio_asset_uri": ("STRING", {"default": ""}),
+        },
+    }
+
+
+def _create_asset_group_inputs():
+    return {
+        "required": {
+            "name": ("STRING", {"default": "seedance_asset_group"}),
+            "description": ("STRING", {"default": "", "multiline": True}),
+            "project_name": ("STRING", {"default": DEFAULT_ASSET_PROJECT_NAME}),
+            "group_type": ("STRING", {"default": DEFAULT_ASSET_GROUP_TYPE}),
+        }
+    }
+
+
+def _upload_asset_inputs():
+    return {
+        "required": {
+            "group_id": ("STRING", {"default": "group-"}),
+            "asset_type": (ASSET_TYPE_OPTIONS, {"default": "Image"}),
+            "source_url": ("STRING", {"default": ""}),
+            "project_name": ("STRING", {"default": DEFAULT_ASSET_PROJECT_NAME}),
+            "name": ("STRING", {"default": ""}),
+            "wait_for_active": ("BOOLEAN", {"default": True}),
+        },
+        "optional": {
+            "image": ("IMAGE",),
+            "video": ("VIDEO",),
+            "audio": ("AUDIO",),
         },
     }
 
@@ -536,6 +639,15 @@ def _upload_image_asset_inputs():
         "optional": {
             "image": ("IMAGE",),
         },
+    }
+
+
+def _get_asset_inputs():
+    return {
+        "required": {
+            "asset_id": ("STRING", {"default": "asset-"}),
+            "project_name": ("STRING", {"default": DEFAULT_ASSET_PROJECT_NAME}),
+        }
     }
 
 
@@ -592,13 +704,17 @@ def _upload_image_for_asset(image):
     try:
         pil_image = _tensor_to_pil_image(image)
         pil_image.save(temp_path, format="PNG")
-        return upload_file_to_tmpfiles(temp_path, timeout=_create_upload_timeout())
+        return upload_file_to_public_url(
+            temp_path,
+            timeout=_create_upload_timeout(),
+            public_upload_config=_create_public_upload_config(),
+        )
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
 
-def _upload_video_reference(video):
+def _upload_video_file(video):
     if video is None:
         raise ValueError("video is required.")
 
@@ -607,10 +723,18 @@ def _upload_video_reference(video):
 
     try:
         video.save_to(temp_path)
-        return upload_file_to_tmpfiles(temp_path, timeout=_create_upload_timeout())
+        return upload_file_to_public_url(
+            temp_path,
+            timeout=_create_upload_timeout(),
+            public_upload_config=_create_public_upload_config(),
+        )
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+def _upload_video_reference(video):
+    return _upload_video_file(video)
 
 
 def _write_audio_waveform_wav(file_path, waveform, sample_rate):
@@ -646,7 +770,7 @@ def _write_audio_waveform_wav(file_path, waveform, sample_rate):
         wav_file.writeframes(pcm_samples.T.tobytes())
 
 
-def _upload_audio_reference(audio):
+def _upload_audio_file(audio):
     if audio is None:
         raise ValueError("audio is required.")
 
@@ -655,79 +779,237 @@ def _upload_audio_reference(audio):
 
     try:
         _write_audio_waveform_wav(temp_path, audio["waveform"], audio["sample_rate"])
-        return upload_file_to_tmpfiles(temp_path, timeout=_create_upload_timeout())
+        return upload_file_to_public_url(
+            temp_path,
+            timeout=_create_upload_timeout(),
+            public_upload_config=_create_public_upload_config(),
+        )
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
 
-def _build_first_frame_content(image, reference_video=None, reference_audio=None):
-    content = [build_first_frame_payload(_upload_image_reference(image))]
+def _upload_audio_reference(audio):
+    return _upload_audio_file(audio)
 
-    if reference_video is not None:
-        content.append(build_video_reference_payload(_upload_video_reference(reference_video)))
 
-    if reference_audio is not None:
-        content.append(build_audio_reference_payload(_upload_audio_reference(reference_audio)))
+def _normalize_optional_string(value):
+    return str(value or "").strip()
+
+
+def _resolve_media_reference_url(local_value, asset_uri, local_input_name, asset_uri_name, upload_local, required=False):
+    normalized_asset_uri = _normalize_optional_string(asset_uri)
+    if local_value is not None and normalized_asset_uri:
+        raise ValueError(f"{local_input_name} and {asset_uri_name} cannot both be provided.")
+
+    if normalized_asset_uri:
+        return normalized_asset_uri
+
+    if local_value is not None:
+        return upload_local(local_value)
+
+    if required:
+        raise ValueError(f"Either {local_input_name} or {asset_uri_name} is required.")
+
+    return ""
+
+
+def _build_first_frame_content(
+    image=None,
+    image_asset_uri="",
+    reference_video=None,
+    reference_video_asset_uri="",
+    reference_audio=None,
+    reference_audio_asset_uri="",
+):
+    first_frame_url = _resolve_media_reference_url(
+        image,
+        image_asset_uri,
+        "image",
+        "image_asset_uri",
+        _upload_image_reference,
+        required=True,
+    )
+    content = [build_first_frame_payload(first_frame_url)]
+
+    reference_video_url = _resolve_media_reference_url(
+        reference_video,
+        reference_video_asset_uri,
+        "reference_video",
+        "reference_video_asset_uri",
+        _upload_video_reference,
+    )
+    if reference_video_url:
+        content.append(build_video_reference_payload(reference_video_url))
+
+    reference_audio_url = _resolve_media_reference_url(
+        reference_audio,
+        reference_audio_asset_uri,
+        "reference_audio",
+        "reference_audio_asset_uri",
+        _upload_audio_reference,
+    )
+    if reference_audio_url:
+        content.append(build_audio_reference_payload(reference_audio_url))
 
     return content
 
 
-def _build_first_last_frame_content(first_image, last_image):
+def _build_first_last_frame_content(first_image=None, last_image=None, first_image_asset_uri="", last_image_asset_uri=""):
+    first_frame_url = _resolve_media_reference_url(
+        first_image,
+        first_image_asset_uri,
+        "first_image",
+        "first_image_asset_uri",
+        _upload_image_reference,
+        required=True,
+    )
+    last_frame_url = _resolve_media_reference_url(
+        last_image,
+        last_image_asset_uri,
+        "last_image",
+        "last_image_asset_uri",
+        _upload_image_reference,
+        required=True,
+    )
     return [
-        build_first_frame_payload(_upload_image_reference(first_image)),
-        build_last_frame_payload(_upload_image_reference(last_image)),
+        build_first_frame_payload(first_frame_url),
+        build_last_frame_payload(last_frame_url),
     ]
 
 
 def _build_asset_model_content(
     model_asset_uri,
-    outfit_image,
+    outfit_image=None,
+    outfit_asset_uri="",
     extra_reference_image=None,
     extra_reference_asset_uri="",
     reference_video=None,
+    reference_video_asset_uri="",
     reference_audio=None,
+    reference_audio_asset_uri="",
 ):
+    outfit_url = _resolve_media_reference_url(
+        outfit_image,
+        outfit_asset_uri,
+        "outfit_image",
+        "outfit_asset_uri",
+        _upload_image_reference,
+        required=True,
+    )
     content = [
         build_asset_image_reference_payload(model_asset_uri),
-        build_image_reference_payload(_upload_image_reference(outfit_image)),
+        build_image_reference_payload(outfit_url),
     ]
 
-    extra_reference_asset_uri = str(extra_reference_asset_uri or "").strip()
+    extra_reference_asset_uri = _normalize_optional_string(extra_reference_asset_uri)
     if extra_reference_asset_uri:
         content.append(build_image_reference_payload(extra_reference_asset_uri))
 
     if extra_reference_image is not None:
         content.append(build_image_reference_payload(_upload_image_reference(extra_reference_image)))
 
-    if reference_video is not None:
-        content.append(build_video_reference_payload(_upload_video_reference(reference_video)))
+    reference_video_url = _resolve_media_reference_url(
+        reference_video,
+        reference_video_asset_uri,
+        "reference_video",
+        "reference_video_asset_uri",
+        _upload_video_reference,
+    )
+    if reference_video_url:
+        content.append(build_video_reference_payload(reference_video_url))
 
-    if reference_audio is not None:
-        content.append(build_audio_reference_payload(_upload_audio_reference(reference_audio)))
+    reference_audio_url = _resolve_media_reference_url(
+        reference_audio,
+        reference_audio_asset_uri,
+        "reference_audio",
+        "reference_audio_asset_uri",
+        _upload_audio_reference,
+    )
+    if reference_audio_url:
+        content.append(build_audio_reference_payload(reference_audio_url))
 
     return content
 
 
-def _resolve_asset_source_url(image, source_url):
+def _resolve_asset_source_url(asset_type, source_url, image=None, video=None, audio=None):
     source_url = str(source_url or "").strip()
     if source_url:
         return source_url
-    if image is None:
-        raise ValueError("Either source_url or image is required for asset upload.")
-    return _upload_image_for_asset(image)
+
+    normalized_type = str(asset_type or "Image").strip()
+    provided_inputs = [
+        ("image", image is not None),
+        ("video", video is not None),
+        ("audio", audio is not None),
+    ]
+    present_inputs = [name for name, is_present in provided_inputs if is_present]
+
+    if normalized_type == "Image":
+        if video is not None or audio is not None:
+            raise ValueError("asset_type=Image only accepts the image input.")
+        if image is None:
+            raise ValueError("Either source_url or image is required for Image asset upload.")
+        return _upload_image_for_asset(image)
+
+    if normalized_type == "Video":
+        if image is not None or audio is not None:
+            raise ValueError("asset_type=Video only accepts the video input.")
+        if video is None:
+            raise ValueError("Either source_url or video is required for Video asset upload.")
+        return _upload_video_file(video)
+
+    if normalized_type == "Audio":
+        if image is not None or video is not None:
+            raise ValueError("asset_type=Audio only accepts the audio input.")
+        if audio is None:
+            raise ValueError("Either source_url or audio is required for Audio asset upload.")
+        return _upload_audio_file(audio)
+
+    if not present_inputs:
+        raise ValueError("Either source_url or a matching local media input is required for asset upload.")
+    raise ValueError(f"Unsupported asset_type: {normalized_type}")
 
 
-def _build_asset_upload_result(group_id, source_url, project_name, name, wait_for_active, image=None):
+def _build_asset_group_result(name, description, project_name, group_type):
     project_name = str(project_name or "").strip() or _create_asset_project_name()
-    source_url = _resolve_asset_source_url(image, source_url)
+    normalized_group_type = str(group_type or DEFAULT_ASSET_GROUP_TYPE).strip() or DEFAULT_ASSET_GROUP_TYPE
+
+    with _asset_client() as client:
+        try:
+            group_info = client.create_asset_group(
+                name=name,
+                description=description,
+                group_type=normalized_group_type,
+                project_name=project_name,
+            )
+        except AssetAPIError as exc:
+            _raise_with_asset_api_guidance(exc)
+
+    group_id = str(group_info.get("Id") or "").strip()
+    if not group_id:
+        raise ValueError("CreateAssetGroup succeeded but did not return Id.")
+
+    return {"result": (group_id, project_name, normalized_group_type, str(name or "").strip())}
+
+
+def _build_asset_upload_result(group_id, asset_type, source_url, project_name, name, wait_for_active, image=None, video=None, audio=None):
+    project_name = str(project_name or "").strip() or _create_asset_project_name()
+    normalized_asset_type = str(asset_type or "Image").strip() or "Image"
+    source_url = _resolve_asset_source_url(
+        normalized_asset_type,
+        source_url,
+        image=image,
+        video=video,
+        audio=audio,
+    )
 
     with _asset_client() as client:
         try:
             created_asset = client.create_asset(
                 group_id=group_id,
                 source_url=source_url,
-                asset_type="Image",
+                asset_type=normalized_asset_type,
                 project_name=project_name,
                 name=name,
             )
@@ -745,27 +1027,81 @@ def _build_asset_upload_result(group_id, source_url, project_name, name, wait_fo
         except AssetAPIError as exc:
             _raise_with_asset_api_guidance(exc)
 
-    return {"result": (asset_uri_from_id(asset_id), asset_id, status, asset_url)}
+    return {"result": (asset_uri_from_id(asset_id), group_id, asset_id, normalized_asset_type, status, asset_url)}
 
 
-def _collect_reference_content(images, videos, audios):
-    image_inputs = [image for image in images if image is not None]
-    video_inputs = [video for video in videos if video is not None]
-    audio_inputs = [audio for audio in audios if audio is not None]
+def _build_get_asset_result(asset_id, project_name):
+    project_name = str(project_name or "").strip() or _create_asset_project_name()
 
-    if audio_inputs and not image_inputs and not video_inputs:
+    with _asset_client() as client:
+        try:
+            asset_info = client.get_asset(asset_id, project_name=project_name)
+        except AssetAPIError as exc:
+            _raise_with_asset_api_guidance(exc)
+
+    normalized_asset_id = str(asset_info.get("Id") or asset_id or "").strip()
+    if not normalized_asset_id:
+        raise ValueError("GetAsset did not return Id.")
+
+    return {
+        "result": (
+            asset_uri_from_id(normalized_asset_id),
+            str(asset_info.get("GroupId") or "").strip(),
+            str(asset_info.get("AssetType") or "").strip(),
+            str(asset_info.get("Status") or "").strip(),
+            str(asset_info.get("URL") or "").strip(),
+            str(asset_info.get("Name") or "").strip(),
+        )
+    }
+
+
+def _collect_reference_content(images, image_asset_uris, videos, video_asset_uris, audios, audio_asset_uris):
+    content = []
+    image_count = 0
+    video_count = 0
+
+    for index, (image, image_asset_uri) in enumerate(zip(images, image_asset_uris, strict=False), start=1):
+        reference_url = _resolve_media_reference_url(
+            image,
+            image_asset_uri,
+            f"image_{index}",
+            f"image_asset_uri_{index}",
+            _upload_image_reference,
+        )
+        if reference_url:
+            image_count += 1
+            content.append(build_image_reference_payload(reference_url))
+
+    for index, (video, video_asset_uri) in enumerate(zip(videos, video_asset_uris, strict=False), start=1):
+        reference_url = _resolve_media_reference_url(
+            video,
+            video_asset_uri,
+            f"video_{index}",
+            f"video_asset_uri_{index}",
+            _upload_video_reference,
+        )
+        if reference_url:
+            video_count += 1
+            content.append(build_video_reference_payload(reference_url))
+
+    has_audio_input = any(audio is not None for audio in audios) or any(
+        str(audio_asset_uri or "").strip() for audio_asset_uri in audio_asset_uris
+    )
+    if has_audio_input and not image_count and not video_count:
         raise ValueError("At least one image or video reference is required when audio references are provided.")
 
-    content = []
-
-    for image in image_inputs:
-        content.append(build_image_reference_payload(_upload_image_reference(image)))
-
-    for video in video_inputs:
-        content.append(build_video_reference_payload(_upload_video_reference(video)))
-
-    for audio in audio_inputs:
-        content.append(build_audio_reference_payload(_upload_audio_reference(audio)))
+    audio_count = 0
+    for index, (audio, audio_asset_uri) in enumerate(zip(audios, audio_asset_uris, strict=False), start=1):
+        reference_url = _resolve_media_reference_url(
+            audio,
+            audio_asset_uri,
+            f"audio_{index}",
+            f"audio_asset_uri_{index}",
+            _upload_audio_reference,
+        )
+        if reference_url:
+            audio_count += 1
+            content.append(build_audio_reference_payload(reference_url))
 
     if not content:
         raise ValueError("At least one image, video, or audio reference is required.")
@@ -796,6 +1132,60 @@ class SeedanceTextNode:
         )
 
 
+class SeedanceCreateAssetGroupNode:
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("group_id", "project_name", "group_type", "name")
+    FUNCTION = "create"
+    CATEGORY = NODE_CATEGORY
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _create_asset_group_inputs()
+
+    def create(self, name, description="", project_name=DEFAULT_ASSET_PROJECT_NAME, group_type=DEFAULT_ASSET_GROUP_TYPE):
+        return _build_asset_group_result(
+            name=name,
+            description=description,
+            project_name=project_name,
+            group_type=group_type,
+        )
+
+
+class SeedanceUploadAssetNode:
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("asset_uri", "group_id", "asset_id", "asset_type", "status", "asset_url")
+    FUNCTION = "upload"
+    CATEGORY = NODE_CATEGORY
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _upload_asset_inputs()
+
+    def upload(
+        self,
+        group_id,
+        asset_type,
+        source_url="",
+        project_name=DEFAULT_ASSET_PROJECT_NAME,
+        name="",
+        wait_for_active=True,
+        image=None,
+        video=None,
+        audio=None,
+    ):
+        return _build_asset_upload_result(
+            group_id=group_id,
+            asset_type=asset_type,
+            source_url=source_url,
+            project_name=project_name,
+            name=name,
+            wait_for_active=wait_for_active,
+            image=image,
+            video=video,
+            audio=audio,
+        )
+
+
 class SeedanceUploadImageAssetNode:
     RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("asset_uri", "asset_id", "status", "asset_url")
@@ -807,14 +1197,31 @@ class SeedanceUploadImageAssetNode:
         return _upload_image_asset_inputs()
 
     def upload(self, group_id, source_url="", project_name=DEFAULT_ASSET_PROJECT_NAME, name="", wait_for_active=True, image=None):
-        return _build_asset_upload_result(
+        result = _build_asset_upload_result(
             group_id=group_id,
+            asset_type="Image",
             source_url=source_url,
             project_name=project_name,
             name=name,
             wait_for_active=wait_for_active,
             image=image,
         )
+        asset_uri, _group_id, asset_id, _asset_type, status, asset_url = result["result"]
+        return {"result": (asset_uri, asset_id, status, asset_url)}
+
+
+class SeedanceGetAssetNode:
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("asset_uri", "group_id", "asset_type", "status", "asset_url", "name")
+    FUNCTION = "get"
+    CATEGORY = NODE_CATEGORY
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _get_asset_inputs()
+
+    def get(self, asset_id, project_name=DEFAULT_ASSET_PROJECT_NAME):
+        return _build_get_asset_result(asset_id=asset_id, project_name=project_name)
 
 
 class SeedanceFirstFrameNode:
@@ -837,9 +1244,12 @@ class SeedanceFirstFrameNode:
         ratio,
         generate_audio,
         watermark,
-        image,
+        image=None,
+        image_asset_uri="",
         reference_video=None,
+        reference_video_asset_uri="",
         reference_audio=None,
+        reference_audio_asset_uri="",
     ):
         return _build_generation_result(
             model,
@@ -850,9 +1260,12 @@ class SeedanceFirstFrameNode:
             generate_audio,
             watermark,
             content=_build_first_frame_content(
-                image,
+                image=image,
+                image_asset_uri=image_asset_uri,
                 reference_video=reference_video,
+                reference_video_asset_uri=reference_video_asset_uri,
                 reference_audio=reference_audio,
+                reference_audio_asset_uri=reference_audio_asset_uri,
             ),
             prompt_required=False,
         )
@@ -869,7 +1282,20 @@ class SeedanceFirstLastFrameNode:
     def INPUT_TYPES(cls):
         return _first_last_frame_inputs()
 
-    def generate(self, model, prompt, resolution, duration, ratio, generate_audio, watermark, first_image, last_image):
+    def generate(
+        self,
+        model,
+        prompt,
+        resolution,
+        duration,
+        ratio,
+        generate_audio,
+        watermark,
+        first_image=None,
+        first_image_asset_uri="",
+        last_image=None,
+        last_image_asset_uri="",
+    ):
         return _build_generation_result(
             model,
             prompt,
@@ -878,7 +1304,12 @@ class SeedanceFirstLastFrameNode:
             ratio,
             generate_audio,
             watermark,
-            content=_build_first_last_frame_content(first_image, last_image),
+            content=_build_first_last_frame_content(
+                first_image=first_image,
+                last_image=last_image,
+                first_image_asset_uri=first_image_asset_uri,
+                last_image_asset_uri=last_image_asset_uri,
+            ),
             prompt_required=False,
         )
 
@@ -899,16 +1330,19 @@ class SeedanceAssetModelNode:
         model,
         model_asset_uri,
         prompt,
-        outfit_image,
         resolution,
         duration,
         ratio,
         generate_audio,
         watermark,
+        outfit_image=None,
+        outfit_asset_uri="",
         extra_reference_asset_uri="",
         extra_reference_image=None,
         reference_video=None,
+        reference_video_asset_uri="",
         reference_audio=None,
+        reference_audio_asset_uri="",
     ):
         return _build_generation_result(
             model,
@@ -920,11 +1354,14 @@ class SeedanceAssetModelNode:
             watermark,
             content=_build_asset_model_content(
                 model_asset_uri,
-                outfit_image,
+                outfit_image=outfit_image,
+                outfit_asset_uri=outfit_asset_uri,
                 extra_reference_image=extra_reference_image,
                 extra_reference_asset_uri=extra_reference_asset_uri,
                 reference_video=reference_video,
+                reference_video_asset_uri=reference_video_asset_uri,
                 reference_audio=reference_audio,
+                reference_audio_asset_uri=reference_audio_asset_uri,
             ),
             prompt_required=True,
         )
@@ -954,20 +1391,35 @@ class SeedanceMultimodalNode:
         generate_audio,
         watermark,
         image_1=None,
+        image_asset_uri_1="",
         image_2=None,
+        image_asset_uri_2="",
         image_3=None,
+        image_asset_uri_3="",
         image_4=None,
+        image_asset_uri_4="",
         image_5=None,
+        image_asset_uri_5="",
         image_6=None,
+        image_asset_uri_6="",
         image_7=None,
+        image_asset_uri_7="",
         image_8=None,
+        image_asset_uri_8="",
         image_9=None,
+        image_asset_uri_9="",
         video_1=None,
+        video_asset_uri_1="",
         video_2=None,
+        video_asset_uri_2="",
         video_3=None,
+        video_asset_uri_3="",
         audio_1=None,
+        audio_asset_uri_1="",
         audio_2=None,
+        audio_asset_uri_2="",
         audio_3=None,
+        audio_asset_uri_3="",
     ):
         content = _collect_reference_content(
             [
@@ -981,8 +1433,21 @@ class SeedanceMultimodalNode:
                 image_8,
                 image_9,
             ],
+            [
+                image_asset_uri_1,
+                image_asset_uri_2,
+                image_asset_uri_3,
+                image_asset_uri_4,
+                image_asset_uri_5,
+                image_asset_uri_6,
+                image_asset_uri_7,
+                image_asset_uri_8,
+                image_asset_uri_9,
+            ],
             [video_1, video_2, video_3],
+            [video_asset_uri_1, video_asset_uri_2, video_asset_uri_3],
             [audio_1, audio_2, audio_3],
+            [audio_asset_uri_1, audio_asset_uri_2, audio_asset_uri_3],
         )
         return _build_generation_result(
             model,
@@ -1027,13 +1492,14 @@ class SeedanceTrustedPersonAssetNode:
 
         upload_result = _build_asset_upload_result(
             group_id=normalized_group_id,
+            asset_type="Image",
             source_url=source_url,
             project_name=project_name,
             name=name,
             wait_for_active=wait_for_active,
             image=image,
         )
-        asset_uri, asset_id, status, asset_url = upload_result["result"]
+        asset_uri, _group_id, asset_id, _asset_type, status, asset_url = upload_result["result"]
         return {"result": (asset_uri, normalized_group_id, asset_id, status, asset_url)}
 
 

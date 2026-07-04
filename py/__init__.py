@@ -1,12 +1,15 @@
 from .nodes import (
     NODE_PREFIX,
+    PreviewVideoNode,
     SeedanceAssetModelNode,
+    SeedanceCreateAssetGroupNode,
     SeedanceFirstFrameNode,
     SeedanceFirstLastFrameNode,
-    PreviewVideoNode,
+    SeedanceGetAssetNode,
     SeedanceMultimodalNode,
     SeedanceTextNode,
     SeedanceTrustedPersonAssetNode,
+    SeedanceUploadAssetNode,
     SeedanceUploadImageAssetNode,
 )
 
@@ -20,6 +23,9 @@ NODE_CLASS_MAPPINGS = {
     _node_name("First-Frame-to-Video"): SeedanceFirstFrameNode,
     _node_name("First-Last-Frame-to-Video"): SeedanceFirstLastFrameNode,
     _node_name("Asset Model-to-Video"): SeedanceAssetModelNode,
+    _node_name("Create Asset Group"): SeedanceCreateAssetGroupNode,
+    _node_name("Upload Asset"): SeedanceUploadAssetNode,
+    _node_name("Get Asset"): SeedanceGetAssetNode,
     _node_name("Trusted Person Asset"): SeedanceTrustedPersonAssetNode,
     _node_name("Upload Image Asset"): SeedanceUploadImageAssetNode,
     _node_name("Multimodal-to-Video"): SeedanceMultimodalNode,
