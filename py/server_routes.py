@@ -1,5 +1,5 @@
 from .api import AssetAPIError
-from .nodes import _asset_client, _create_asset_project_name
+from .nodes import _asset_client, _create_asset_project_name, _load_json_config, _resolve_api_provider
 from .validation_sessions import ValidationSessionStore, build_callback_url
 
 
@@ -57,6 +57,11 @@ def register_server_routes(prompt_server_cls=None, session_store=None):
     @routes.post(CREATE_VALIDATION_SESSION_ROUTE)
     async def create_validation_session(request):
         try:
+            if _resolve_api_provider(_load_json_config()) == "las":
+                raise ValueError(
+                    "Trusted Person Asset is not supported with api_provider='las'. "
+                    "Complete LAS real-person authorization in the console."
+                )
             payload = await request.json()
             if not isinstance(payload, dict):
                 raise ValueError("Request body must be a JSON object.")

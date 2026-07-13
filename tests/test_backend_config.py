@@ -57,6 +57,7 @@ ENV_KEYS = {
     "ARK_ASSET_WAIT_TIMEOUT": "",
     "SEEDANCE_ASSET_PROJECT_NAME": "",
     "ARK_PROJECT_NAME": "",
+    "LAS_API_KEY": "",
 }
 
 
@@ -332,6 +333,65 @@ class BackendConfigTests(unittest.TestCase):
             self.assertEqual(asset_client.wait_timeout, 800)
             self.assertEqual(asset_project_name, "env-project")
 
+    def test_las_runtime_uses_only_las_configuration(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            json_path = Path(tmpdir) / "config.local.json"
+            json_path.write_text(
+                json.dumps(
+                    {
+                        "api_provider": "las",
+                        "las_api_key": "las-json-key",
+                        "las_region": "cn-shanghai",
+                        "api_key": "ark-key-that-must-not-be-used",
+                        "access_key_id": "ark-ak-that-must-not-be-used",
+                        "secret_access_key": "ark-sk-that-must-not-be-used",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.dict(os.environ, {**ENV_KEYS, "LAS_API_KEY": "las-env-key"}, clear=False):
+                with mock.patch.object(seedance_nodes, "CONFIG_JSON_PATH", json_path):
+                    with mock.patch.object(seedance_nodes, "Client", FakeResolvedClient):
+                        client = seedance_nodes._create_runtime_client()
+
+            self.assertEqual(client.api_key, "las-json-key")
+            self.assertEqual(client.base_url, "https://operator.las.cn-shanghai.volces.com/api/v1")
+
+    def test_las_asset_factory_uses_api_key_not_ark_aksk(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            json_path = Path(tmpdir) / "config.local.json"
+            json_path.write_text(
+                json.dumps(
+                    {
+                        "api_provider": "las",
+                        "LAS_DEFAULT_API_KEY": "legacy-las-key",
+                        "access_key_id": "ark-ak-that-must-not-be-used",
+                        "secret_access_key": "ark-sk-that-must-not-be-used",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch.object(seedance_nodes, "CONFIG_JSON_PATH", json_path):
+                client = seedance_nodes._create_asset_client()
+        try:
+            self.assertIsInstance(client, asset_api.LASAssetClient)
+            self.assertEqual(client.api_key, "legacy-las-key")
+        finally:
+            client.close()
+
+    def test_las_node_model_options_hide_mini(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            json_path = Path(tmpdir) / "config.local.json"
+            json_path.write_text(json.dumps({"api_provider": "las", "las_api_key": "test-key"}), encoding="utf-8")
+            with mock.patch.object(seedance_nodes, "CONFIG_JSON_PATH", json_path):
+                options = seedance_nodes.SeedanceTextNode.INPUT_TYPES()["required"]["model"][0]
+
+        self.assertEqual(options, video_api.LAS_MODEL_OPTIONS)
+
+    def test_invalid_api_provider_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "api_provider must be either"):
+            seedance_nodes._resolve_api_provider({"api_provider": "other"})
+
     def test_tmpfiles_url_is_converted_to_direct_download(self):
         self.assertEqual(
             upload_module._normalize_tmpfiles_download_url("http://tmpfiles.org/123/example.jpg"),
@@ -454,6 +514,30 @@ class BackendConfigTests(unittest.TestCase):
                 "ProjectName": "project-a",
             },
         )
+
+    def test_las_asset_client_uses_bearer_open_endpoint(self):
+        seen_requests = []
+
+        def handler(request):
+            seen_requests.append(request)
+            return httpx.Response(200, json={"Result": {"Id": "Asset-123"}})
+
+        client = asset_api.LASAssetClient(
+            "las-test",
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            result = client.create_asset("group-123", "https://example.com/source.png", project_name="project-a")
+        finally:
+            client.close()
+
+        self.assertEqual(result["Id"], "Asset-123")
+        self.assertEqual(
+            str(seen_requests[0].url),
+            "https://operator.las.cn-shanghai.volces.com/api/v1/open/CreateAsset",
+        )
+        self.assertEqual(seen_requests[0].headers["Authorization"], "Bearer las-test")
+        self.assertNotIn("X-Date", seen_requests[0].headers)
 
     def test_asset_client_posts_validation_session_actions(self):
         seen_requests = []
@@ -648,6 +732,21 @@ class BackendConfigTests(unittest.TestCase):
                             False,
                             False,
                         )
+
+    def test_las_rejects_mini_model(self):
+        with self.assertRaisesRegex(ValueError, "las model must be one of"):
+            video_api.build_generation_payload(
+                "doubao-seedance-2-0-mini-260615",
+                "A prompt.",
+                "720p",
+                "5",
+                "adaptive",
+                provider="las",
+            )
+
+    def test_asset_uri_accepts_las_uppercase_asset_id(self):
+        payload = video_api.build_asset_image_reference_payload("asset://Asset-2026-test")
+        self.assertEqual(payload["image_url"]["url"], "asset://Asset-2026-test")
 
     def test_image_reference_rejects_non_url_non_data_input(self):
         with self.assertRaisesRegex(ValueError, "image_url must be a valid http or https URL."):
@@ -1199,6 +1298,14 @@ class BackendConfigTests(unittest.TestCase):
                 group_id="group-",
                 source_url="https://example.com/person.png",
             )
+
+    def test_trusted_person_asset_node_rejects_las_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            json_path = Path(tmpdir) / "config.local.json"
+            json_path.write_text(json.dumps({"api_provider": "las", "las_api_key": "test-key"}), encoding="utf-8")
+            with mock.patch.object(seedance_nodes, "CONFIG_JSON_PATH", json_path):
+                with self.assertRaisesRegex(ValueError, "not supported with api_provider='las'"):
+                    seedance_nodes.SeedanceTrustedPersonAssetNode().upload("group-123", source_url="https://example.com/person.png")
 
     def test_multimodal_node_builds_mixed_references(self):
         fake_client = FakeVideoClient(

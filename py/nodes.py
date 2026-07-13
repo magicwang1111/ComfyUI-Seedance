@@ -14,6 +14,7 @@ import PIL.Image
 from .api import (
     AssetAPIError,
     AssetClient,
+    LASAssetClient,
     Client,
     DEFAULT_ASSET_BASE_URL,
     DEFAULT_ASSET_GROUP_TYPE,
@@ -24,6 +25,7 @@ from .api import (
     DEFAULT_UPLOAD_TIMEOUT,
     IMAGE_DATA_URL_MAX_SIZE_BYTES,
     MODEL_OPTIONS,
+    LAS_MODEL_OPTIONS,
     NODE_DURATION_OPTIONS,
     RATIO_OPTIONS,
     RESOLUTION_OPTIONS,
@@ -51,6 +53,7 @@ NODE_PREFIX = "ComfyUI-Seedance"
 NODE_CATEGORY = NODE_PREFIX
 DEFAULT_FILENAME_PREFIX = NODE_PREFIX
 DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+DEFAULT_LAS_BASE_URL = "https://operator.las.cn-shanghai.volces.com/api/v1"
 DEFAULT_POLL_INTERVAL = 15.0
 DEFAULT_REQUEST_TIMEOUT = 60
 DEFAULT_UPLOAD_TIMEOUT_SECONDS = DEFAULT_UPLOAD_TIMEOUT
@@ -142,6 +145,23 @@ def _normalize_base_url(value):
     return normalized or DEFAULT_BASE_URL
 
 
+def _resolve_api_provider(config_data):
+    provider = str(config_data.get("api_provider") or "ark").strip().lower()
+    if provider not in {"ark", "las"}:
+        raise ValueError("api_provider must be either 'ark' or 'las'.")
+    return provider
+
+
+def _resolve_las_api_key(config_data):
+    for key in ("las_api_key", "LAS_DEFAULT_API_KEY"):
+        if _json_value_present(config_data, key):
+            return str(config_data[key]).strip()
+    env_value = _load_env_value("LAS_API_KEY")
+    if env_value:
+        return env_value
+    raise ValueError("A las_api_key is required when api_provider is 'las'.")
+
+
 def _resolve_api_key(config_data):
     if _json_value_present(config_data, "api_key"):
         return str(config_data["api_key"]).strip()
@@ -154,6 +174,13 @@ def _resolve_api_key(config_data):
 
 
 def _resolve_base_url(config_data):
+    if _resolve_api_provider(config_data) == "las":
+        region = str(config_data.get("las_region") or "cn-shanghai").strip().lower()
+        if region != "cn-shanghai":
+            raise ValueError("las_region must be 'cn-shanghai'.")
+        if _json_value_present(config_data, "las_base_url"):
+            return str(config_data["las_base_url"]).strip().rstrip("/")
+        return DEFAULT_LAS_BASE_URL
     if _json_value_present(config_data, "base_url"):
         return _normalize_base_url(config_data["base_url"])
 
@@ -282,8 +309,9 @@ def _resolve_asset_project_name(config_data):
 
 def _create_runtime_client():
     config_data = _load_json_config()
+    provider = _resolve_api_provider(config_data)
     return Client(
-        _resolve_api_key(config_data),
+        _resolve_las_api_key(config_data) if provider == "las" else _resolve_api_key(config_data),
         timeout=_resolve_request_timeout(config_data),
         base_url=_resolve_base_url(config_data),
         poll_interval=_resolve_poll_interval(config_data),
@@ -355,6 +383,14 @@ def _create_public_upload_config():
 
 def _create_asset_client():
     config_data = _load_json_config()
+    if _resolve_api_provider(config_data) == "las":
+        return LASAssetClient(
+            _resolve_las_api_key(config_data),
+            base_url=_resolve_base_url(config_data),
+            timeout=_resolve_asset_timeout(config_data),
+            poll_interval=_resolve_asset_poll_interval(config_data),
+            wait_timeout=_resolve_asset_wait_timeout(config_data),
+        )
     return AssetClient(
         _resolve_access_key_id(config_data),
         _resolve_secret_access_key(config_data),
@@ -389,10 +425,12 @@ def _asset_client():
 
 
 def _raise_with_api_guidance(exc):
+    provider = _resolve_api_provider(_load_json_config())
     if exc.status_code in {401, 403}:
+        credential_name = "las_api_key" if provider == "las" else "api_key"
         raise ValueError(
             f"The video API rejected the request with {exc.status_code}. "
-            "Check api_key, base_url, billing, and model availability."
+            f"Check {credential_name}, base_url, billing, and model availability."
         ) from exc
 
     if exc.status_code == 429:
@@ -402,7 +440,13 @@ def _raise_with_api_guidance(exc):
 
 
 def _raise_with_asset_api_guidance(exc):
+    provider = _resolve_api_provider(_load_json_config())
     if exc.status_code in {401, 403}:
+        if provider == "las":
+            raise ValueError(
+                f"The LAS asset API rejected the request with {exc.status_code}. "
+                "Check las_api_key, LAS asset permissions, and project_name."
+            ) from exc
         raise ValueError(
             f"The asset API rejected the request with {exc.status_code}. "
             "Check access_key_id, secret_access_key, ArkFullAccess permission, and project_name."
@@ -432,9 +476,9 @@ def _build_local_media_view_url(filename, subfolder, folder_type):
     return "/api/view?" + "&".join(query)
 
 
-def _submit_and_wait(client, model_name, payload):
+def _submit_and_wait(client, model_name, payload, provider):
     try:
-        submission = submit_video_generation(client, model_name, payload)
+        submission = submit_video_generation(client, model_name, payload, provider=provider)
     except VideoAPIError as exc:
         _raise_with_api_guidance(exc)
 
@@ -497,6 +541,8 @@ def _build_generation_result(
     content=None,
     prompt_required=True,
 ):
+    config_data = _load_json_config()
+    provider = _resolve_api_provider(config_data)
     with _runtime_client() as client:
         payload = build_generation_payload(
             model,
@@ -508,15 +554,18 @@ def _build_generation_result(
             watermark=watermark,
             content=content,
             prompt_required=prompt_required,
+            provider=provider,
         )
-        task_id, task_info = _submit_and_wait(client, model, payload)
+        task_id, task_info = _submit_and_wait(client, model, payload, provider)
         print(f"[{NODE_PREFIX}] succeeded {model} task_id={task_id}")
         return _build_video_result(client, task_id, task_info)
 
 
 def _common_generation_inputs():
+    config_data = _load_json_config()
+    provider = _resolve_api_provider(config_data)
     return {
-        "model": (MODEL_OPTIONS, {"default": "doubao-seedance-2-0-fast-260128"}),
+        "model": (LAS_MODEL_OPTIONS if provider == "las" else MODEL_OPTIONS, {"default": "doubao-seedance-2-0-fast-260128"}),
         "prompt": ("STRING", {"multiline": True, "default": ""}),
         "resolution": (RESOLUTION_OPTIONS, {"default": "720p"}),
         "duration": (NODE_DURATION_OPTIONS, {"default": "5"}),
@@ -1486,6 +1535,11 @@ class SeedanceTrustedPersonAssetNode:
         wait_for_active=True,
         image=None,
     ):
+        if _resolve_api_provider(_load_json_config()) == "las":
+            raise ValueError(
+                "Trusted Person Asset is not supported with api_provider='las'. "
+                "Complete LAS real-person authorization in the console and use the resulting asset outside this node."
+            )
         normalized_group_id = str(group_id or "").strip()
         if not normalized_group_id.startswith("group-") or normalized_group_id == "group-":
             raise ValueError("Complete real-person validation or provide a valid group_id before uploading.")

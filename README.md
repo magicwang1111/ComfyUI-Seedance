@@ -1,6 +1,6 @@
 # ComfyUI-Seedance
 
-`ComfyUI-Seedance` is a small ComfyUI custom node pack for generating Seedance videos through the Volcengine Ark native Video Generation Task API.
+`ComfyUI-Seedance` is a small ComfyUI custom node pack for generating Seedance videos through Volcengine Ark or LAS.
 
 It exposes eleven nodes under the `ComfyUI-Seedance` category:
 
@@ -22,7 +22,8 @@ It exposes eleven nodes under the `ComfyUI-Seedance` category:
   - `doubao-seedance-2-0-260128`
   - `doubao-seedance-2-0-fast-260128`
   - `doubao-seedance-2-0-mini-260615`
-- Volcengine Ark native API through `https://ark.cn-beijing.volces.com/api/v3`
+- `api_provider: "ark"` through `https://ark.cn-beijing.volces.com/api/v3`
+- `api_provider: "las"` through `https://operator.las.cn-shanghai.volces.com/api/v1`
 - Seedance-native parameter names:
   - `resolution`
   - `duration`
@@ -34,10 +35,10 @@ It exposes eleven nodes under the `ComfyUI-Seedance` category:
 - Public upload bridge priority:
   - configured Aliyun OSS signed URL
   - fallback `tmpfiles.org`
-- Ark asset group creation through `CreateAssetGroup`
-- Ark asset upload and status lookup through `CreateAsset` / `GetAsset`
+- Ark or LAS asset group creation through `CreateAssetGroup`
+- Ark or LAS asset upload and status lookup through `CreateAsset` / `GetAsset`
 - Direct `asset://asset-...` references for image / video / audio slots in generation nodes
-- Real-person validation can be created and completed from the `Trusted Person Asset` node UI
+- Real-person validation from the `Trusted Person Asset` node UI is Ark-only
 - A standalone `Preview Video` node for explicit playback and saving
 
 ## Mode Split
@@ -67,7 +68,7 @@ The generation nodes mirror the official Seedance image/video input modes instea
 
 ## Current API Notes
 
-- This package only supports the Volcengine Ark native task API.
+- Ark supports the standard, Fast, and Mini models. LAS supports only the standard and Fast models; LAS rejects Mini even if an old workflow supplies it.
 - `resolution` supports `480p`, `720p`, `1080p`, and `4k`.
 - `doubao-seedance-2-0-fast-260128` and `doubao-seedance-2-0-mini-260615` only support `480p` and `720p`.
 - `doubao-seedance-2-0-260128` supports `480p`, `720p`, `1080p`, and `4k`.
@@ -215,6 +216,8 @@ Do not write the asset ID directly in the prompt. Use `图片1`, `图片2`, `图
 
 Use `ComfyUI-Seedance Trusted Person Asset` when the real-person Asset Group has not been created yet.
 
+This node is only available with `api_provider: "ark"`. LAS real-person assets must be authorized and added manually in the LAS console; running this node in LAS mode returns an explicit error.
+
 1. Keep `project_name` aligned with the project used by the Seedance inference endpoint.
 2. Click `创建真人认证`. The node creates a 30-minute validation session and opens the Ark H5 page.
 3. Complete the validation and return to ComfyUI. The node writes the resulting `group_id` automatically.
@@ -229,6 +232,7 @@ Create [config.local.json](./config.local.json) in the repository root. Use [con
 
 ```json
 {
+  "api_provider": "ark",
   "api_key": "",
   "base_url": "https://ark.cn-beijing.volces.com/api/v3",
   "poll_interval": 15.0,
@@ -246,17 +250,22 @@ Create [config.local.json](./config.local.json) in the repository root. Use [con
   "asset_project_name": "default",
   "asset_poll_interval": 5.0,
   "asset_timeout": 60,
-  "asset_wait_timeout": 900
+  "asset_wait_timeout": 900,
+  "las_api_key": "",
+  "las_region": "cn-shanghai",
+  "las_base_url": "https://operator.las.cn-shanghai.volces.com/api/v1"
 }
 ```
 
-- `api_key` is the Ark Bearer API key for video generation.
-- `access_key_id` / `secret_access_key` are the Ark asset-management AK/SK pair.
+- `api_provider` defaults to `ark`; set it to `las` to use LAS Shanghai.
+- `api_key` and `access_key_id` / `secret_access_key` are used only by Ark.
+- `las_api_key` is used by LAS generation and normal asset APIs. `LAS_DEFAULT_API_KEY` remains a compatible legacy config key.
 - `oss_*` fields configure the public upload bridge for local files.
 
 Supported environment variables:
 
 - `ARK_API_KEY`
+- `LAS_API_KEY`
 - `SEEDANCE_API_KEY`
 - `SEEDANCE_BASE_URL`
 - `SEEDANCE_POLL_INTERVAL`
@@ -292,8 +301,8 @@ Priority:
    pip install -r ComfyUI/custom_nodes/ComfyUI-Seedance/requirements.txt
    ```
 
-3. Add `config.local.json` with a Volcengine Ark API key, or set `ARK_API_KEY`.
-4. For asset upload, also add Ark `access_key_id` and `secret_access_key`, or set `ARK_ACCESS_KEY_ID` and `ARK_SECRET_ACCESS_KEY`.
+3. Add `config.local.json` with `api_provider: "ark"` and an Ark API key, or with `api_provider: "las"` and `las_api_key`.
+4. Ark asset upload additionally needs `access_key_id` and `secret_access_key`; LAS asset upload needs only `las_api_key`.
 5. To use OSS relay for local media, also fill the `oss_*` fields or set the corresponding `OSS_*` environment variables.
 6. Restart ComfyUI.
 

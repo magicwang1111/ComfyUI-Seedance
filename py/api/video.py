@@ -9,6 +9,10 @@ MODEL_OPTIONS = [
     "doubao-seedance-2-0-fast-260128",
     "doubao-seedance-2-0-mini-260615",
 ]
+LAS_MODEL_OPTIONS = [
+    "doubao-seedance-2-0-260128",
+    "doubao-seedance-2-0-fast-260128",
+]
 RESOLUTION_OPTIONS = ["480p", "720p", "1080p", "4k"]
 DURATION_OPTIONS = ["-1"] + [str(value) for value in range(4, 16)]
 NODE_DURATION_OPTIONS = [str(value) for value in range(4, 16)]
@@ -31,10 +35,11 @@ def _clean_prompt(prompt, required=True):
     return prompt
 
 
-def _validate_model_name(model_name):
+def _validate_model_name(model_name, provider="ark"):
     normalized = str(model_name).strip()
-    if normalized not in MODEL_OPTIONS:
-        raise ValueError(f"model must be one of: {', '.join(MODEL_OPTIONS)}.")
+    allowed_models = LAS_MODEL_OPTIONS if provider == "las" else MODEL_OPTIONS
+    if normalized not in allowed_models:
+        raise ValueError(f"{provider} model must be one of: {', '.join(allowed_models)}.")
     return normalized
 
 
@@ -92,7 +97,7 @@ def _validate_asset_uri(value, field_name="asset_uri"):
     normalized = str(value or "").strip()
     if not normalized:
         raise ValueError(f"{field_name} is required.")
-    if not normalized.startswith("asset://asset-"):
+    if not normalized.lower().startswith("asset://asset-"):
         raise ValueError(f"{field_name} must use asset://asset-... format.")
     return normalized
 
@@ -152,8 +157,9 @@ def build_generation_payload(
     watermark=False,
     content=None,
     prompt_required=True,
+    provider="ark",
 ):
-    validated_model = _validate_model_name(model_name)
+    validated_model = _validate_model_name(model_name, provider=provider)
     cleaned_prompt = _clean_prompt(prompt, required=prompt_required)
     request_content = []
 
@@ -177,8 +183,8 @@ def build_generation_payload(
     }
 
 
-def submit_video_generation(client, model_name, payload):
-    _validate_model_name(model_name)
+def submit_video_generation(client, model_name, payload, provider="ark"):
+    _validate_model_name(model_name, provider=provider)
     return client.request("POST", "/contents/generations/tasks", json=payload)
 
 

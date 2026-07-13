@@ -62,6 +62,21 @@ class FakeValidationClient:
 
 
 class ServerRouteTests(unittest.TestCase):
+    def test_validation_session_route_rejects_las(self):
+        routes = FakeRoutes()
+        prompt_server_cls = SimpleNamespace(instance=SimpleNamespace(routes=routes))
+
+        with mock.patch.object(server_routes, "_ROUTES_REGISTERED", False):
+            with mock.patch.object(server_routes, "_load_json_config", return_value={"api_provider": "las"}):
+                registered = server_routes.register_server_routes(prompt_server_cls=prompt_server_cls)
+                self.assertTrue(registered)
+                response = asyncio.run(
+                    routes.handlers[("POST", server_routes.CREATE_VALIDATION_SESSION_ROUTE)](FakeRequest(payload={}))
+                )
+
+        self.assertEqual(response.status, 400)
+        self.assertIn("not supported with api_provider='las'", json.loads(response.body)["error"])
+
     def test_validation_route_flow_returns_group_id_without_exposing_token(self):
         routes = FakeRoutes()
         prompt_server_cls = SimpleNamespace(instance=SimpleNamespace(routes=routes))

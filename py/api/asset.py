@@ -9,6 +9,7 @@ import httpx
 
 
 DEFAULT_ASSET_BASE_URL = "https://ark.cn-beijing.volcengineapi.com"
+DEFAULT_LAS_BASE_URL = "https://operator.las.cn-shanghai.volces.com/api/v1"
 DEFAULT_ASSET_REGION = "cn-beijing"
 DEFAULT_ASSET_SERVICE = "ark"
 DEFAULT_ASSET_VERSION = "2024-01-01"
@@ -279,6 +280,115 @@ class AssetClient:
                     f"Timed out after {self.wait_timeout:g} seconds waiting for asset {asset_id} to become Active."
                 )
 
+            time.sleep(min(self.poll_interval, remaining))
+
+
+class LASAssetClient:
+    def __init__(
+        self,
+        api_key,
+        base_url=DEFAULT_LAS_BASE_URL,
+        timeout=DEFAULT_ASSET_TIMEOUT,
+        poll_interval=DEFAULT_ASSET_POLL_INTERVAL,
+        wait_timeout=DEFAULT_ASSET_WAIT_TIMEOUT,
+        transport=None,
+    ):
+        self.api_key = _clean_required_string(api_key, "las_api_key")
+        self.base_url = str(base_url or DEFAULT_LAS_BASE_URL).strip().rstrip("/") or DEFAULT_LAS_BASE_URL
+        self.poll_interval = float(poll_interval)
+        self.wait_timeout = float(wait_timeout)
+        if self.poll_interval < 0:
+            raise ValueError("poll_interval must be greater than or equal to 0.")
+        if self.wait_timeout <= 0:
+            raise ValueError("wait_timeout must be greater than 0.")
+        self._client = httpx.Client(timeout=timeout, transport=transport)
+
+    def close(self):
+        self._client.close()
+
+    def request(self, action, payload):
+        action = _clean_required_string(action, "action")
+        if not isinstance(payload, dict):
+            raise ValueError("asset API payload must be a dictionary.")
+
+        try:
+            response = self._client.post(
+                f"{self.base_url}/open/{action}",
+                json=payload,
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise AssetAPIError(f"LAS asset API request failed for {action}: {exc}", action=action) from exc
+
+        try:
+            response_payload = response.json()
+        except ValueError as exc:
+            if response.status_code >= 400:
+                raise AssetAPIError(
+                    f"LAS asset API request failed for {action} with HTTP {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                    action=action,
+                    response=response.text,
+                ) from exc
+            raise AssetAPIError(f"LAS asset API returned invalid JSON for {action}.", action=action) from exc
+
+        if response.status_code >= 400:
+            raise AssetAPIError(
+                f"LAS asset API request failed for {action} with HTTP {response.status_code}: {response_payload}",
+                status_code=response.status_code,
+                action=action,
+                response=response_payload,
+            )
+
+        metadata = response_payload.get("ResponseMetadata") if isinstance(response_payload, dict) else None
+        if isinstance(metadata, dict) and metadata.get("Error"):
+            error_payload = metadata["Error"]
+            message = error_payload.get("Message") or json.dumps(error_payload, ensure_ascii=False)
+            raise AssetAPIError(f"LAS asset API request failed for {action}: {message}", action=action, response=response_payload)
+        return response_payload.get("Result", response_payload) if isinstance(response_payload, dict) else response_payload
+
+    def create_asset_group(self, name, description="", group_type=DEFAULT_ASSET_GROUP_TYPE, project_name="default"):
+        payload = {
+            "Name": _clean_required_string(name, "name"),
+            "ProjectName": _clean_required_string(project_name or "default", "project_name"),
+            "GroupType": _clean_required_string(group_type or DEFAULT_ASSET_GROUP_TYPE, "group_type"),
+        }
+        if str(description or "").strip():
+            payload["Description"] = str(description).strip()
+        return self.request("CreateAssetGroup", payload)
+
+    def create_asset(self, group_id, source_url, asset_type="Image", project_name="default", name=""):
+        payload = {
+            "GroupId": _clean_required_string(group_id, "group_id"),
+            "URL": _validate_http_url(source_url, "source_url"),
+            "AssetType": _clean_required_string(asset_type, "asset_type"),
+            "ProjectName": _clean_required_string(project_name or "default", "project_name"),
+        }
+        if str(name or "").strip():
+            payload["Name"] = str(name).strip()
+        return self.request("CreateAsset", payload)
+
+    def get_asset(self, asset_id, project_name="default"):
+        return self.request(
+            "GetAsset",
+            {"Id": _clean_required_string(asset_id, "asset_id"), "ProjectName": _clean_required_string(project_name or "default", "project_name")},
+        )
+
+    def wait_for_asset_active(self, asset_id, project_name="default"):
+        deadline = time.monotonic() + self.wait_timeout
+        while True:
+            asset_info = self.get_asset(asset_id, project_name=project_name)
+            status = str(asset_info.get("Status", "")).strip()
+            normalized_status = status.lower()
+            if normalized_status == ACTIVE_ASSET_STATUS:
+                return asset_info
+            if normalized_status in FAILED_ASSET_STATUSES:
+                raise RuntimeError(describe_asset_failure(asset_id, asset_info))
+            if normalized_status and normalized_status not in PROCESSING_ASSET_STATUSES:
+                raise RuntimeError(f"Unexpected asset status for {asset_id}: {status}.")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"Timed out after {self.wait_timeout:g} seconds waiting for asset {asset_id} to become Active.")
             time.sleep(min(self.poll_interval, remaining))
 
 

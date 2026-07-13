@@ -1,7 +1,9 @@
 from .asset import (
     AssetAPIError,
     AssetClient,
+    LASAssetClient,
     DEFAULT_ASSET_BASE_URL,
+    DEFAULT_LAS_BASE_URL,
     DEFAULT_ASSET_GROUP_TYPE,
     DEFAULT_ASSET_POLL_INTERVAL,
     DEFAULT_ASSET_TIMEOUT,
@@ -21,6 +23,7 @@ from .upload import (
 )
 from .video import (
     DURATION_OPTIONS,
+    LAS_MODEL_OPTIONS,
     MODEL_OPTIONS,
     NODE_DURATION_OPTIONS,
     RATIO_OPTIONS,
@@ -42,7 +45,9 @@ __all__ = [
     "Client",
     "AssetAPIError",
     "AssetClient",
+    "LASAssetClient",
     "DEFAULT_ASSET_BASE_URL",
+    "DEFAULT_LAS_BASE_URL",
     "DEFAULT_ASSET_GROUP_TYPE",
     "DEFAULT_ASSET_POLL_INTERVAL",
     "DEFAULT_ASSET_TIMEOUT",
@@ -50,6 +55,7 @@ __all__ = [
     "DEFAULT_OSS_SIGNED_URL_EXPIRES",
     "DEFAULT_UPLOAD_TIMEOUT",
     "DURATION_OPTIONS",
+    "LAS_MODEL_OPTIONS",
     "IMAGE_DATA_URL_MAX_SIZE_BYTES",
     "MODEL_OPTIONS",
     "NODE_DURATION_OPTIONS",
