@@ -1472,6 +1472,15 @@ class BackendConfigTests(unittest.TestCase):
         )
         self.assertTrue(result["result"][0].endswith("ComfyUI-Seedance_00001_.mp4"))
 
+    def test_preview_video_hides_save_controls(self):
+        required = seedance_nodes.PreviewVideoNode.INPUT_TYPES()["required"]
+        self.assertNotIn("filename_prefix", required)
+        self.assertNotIn("save_output", required)
+        self.assertEqual(
+            seedance_nodes.DEFAULT_FILENAME_PREFIX,
+            "Seedance_%year%%month%%day%_%hour%%minute%%second%",
+        )
+
     def test_examples_are_valid_json(self):
         examples_dir = REPO_ROOT / "examples"
         example_files = sorted(examples_dir.glob("*.json"))

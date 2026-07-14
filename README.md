@@ -506,6 +506,7 @@ Notes:
 - To preview the generated video inside ComfyUI, connect `url` to `ComfyUI-Seedance Preview Video`.
 - With `save_output=false`, the preview node plays the remote URL directly.
 - With `save_output=true`, it downloads the MP4 to ComfyUI output first, then previews the local file.
+- Saving is enabled by default. Files are stored as `Seedance_YYYYMMDD_HHMMSS_00001_.mp4`, so they sort in timeline order.
 
 ## Examples
 

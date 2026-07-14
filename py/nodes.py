@@ -51,7 +51,7 @@ CONFIG_JSON_PATH = ROOT_DIR / "config.local.json"
 
 NODE_PREFIX = "ComfyUI-Seedance"
 NODE_CATEGORY = NODE_PREFIX
-DEFAULT_FILENAME_PREFIX = NODE_PREFIX
+DEFAULT_FILENAME_PREFIX = "Seedance_%year%%month%%day%_%hour%%minute%%second%"
 DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_LAS_BASE_URL = "https://operator.las.cn-shanghai.volces.com/api/v1"
 DEFAULT_POLL_INTERVAL = 15.0
@@ -511,6 +511,7 @@ def _build_preview_result(video_url, filename_prefix, save_output):
             "result": ("",),
         }
 
+    filename_prefix = str(filename_prefix or "").strip() or DEFAULT_FILENAME_PREFIX
     output_dir = folder_paths.get_output_directory()
     full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(filename_prefix, output_dir)
     saved_name = f"{filename}_{counter:05}_.mp4"
@@ -1569,8 +1570,6 @@ class PreviewVideoNode:
         return {
             "required": {
                 "video_url": ("STRING", {"forceInput": True}),
-                "filename_prefix": ("STRING", {"default": DEFAULT_FILENAME_PREFIX}),
-                "save_output": ("BOOLEAN", {"default": True}),
             }
         }
 
