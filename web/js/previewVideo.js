@@ -7,25 +7,12 @@ const NODE_NAMES = new Set([
     "ComfyUI-Seedance Preview Video",
 ]);
 
-function setVideoDimensions(videoElement, width, height) {
-    videoElement.style.width = `${width}px`;
-    videoElement.style.height = `${height}px`;
-}
-
-function resizeVideoAspectRatio(videoElement, maxWidth, maxHeight) {
-    const aspectRatio = videoElement.videoWidth / videoElement.videoHeight;
-    let newWidth;
-    let newHeight;
-
-    if (videoElement.videoWidth / maxWidth > videoElement.videoHeight / maxHeight) {
-        newWidth = maxWidth;
-        newHeight = newWidth / aspectRatio;
-    } else {
-        newHeight = maxHeight;
-        newWidth = newHeight * aspectRatio;
-    }
-
-    setVideoDimensions(videoElement, newWidth, newHeight);
+function makeVideoResponsive(videoElement) {
+    videoElement.style.width = "100%";
+    videoElement.style.height = "100%";
+    videoElement.style.maxWidth = "100%";
+    videoElement.style.maxHeight = "100%";
+    videoElement.style.objectFit = "contain";
 }
 
 function chainCallback(object, property, callback) {
@@ -53,7 +40,7 @@ function addVideoPreview(nodeType) {
             videoEl.controls = false;
             videoEl.loop = true;
             videoEl.muted = true;
-            resizeVideoAspectRatio(videoEl, BASE_SIZE, BASE_SIZE);
+            makeVideoResponsive(videoEl);
             resolve(videoEl);
         });
         videoEl.addEventListener("error", () => resolve());
@@ -97,13 +84,12 @@ function addVideoPreview(nodeType) {
                 this.animatedImages = true;
                 const widgetIdx = this.widgets?.findIndex((widget) => widget.name === ANIM_PREVIEW_WIDGET);
 
-                this.size[0] = BASE_SIZE;
-                this.size[1] = BASE_SIZE;
-
                 if (widgetIdx > -1) {
                     const widget = this.widgets[widgetIdx];
                     widget.options.host.updateImages(this.imgs);
                 } else {
+                    this.size[0] = BASE_SIZE;
+                    this.size[1] = BASE_SIZE;
                     const host = createImageHost(this);
                     const widget = this.addDOMWidget(ANIM_PREVIEW_WIDGET, "img", host.el, {
                         host,
