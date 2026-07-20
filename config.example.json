@@ -1,4 +1,9 @@
 {
+  "speech_api_key": "",
+  "speech_base_url": "https://openspeech.bytedance.com/api/v3/tts",
+  "speech_request_timeout": 60,
+  "speech_poll_interval": 5.0,
+  "speech_wait_timeout": 900,
   "api_provider": "ark",
   "api_key": "",
   "base_url": "https://ark.cn-beijing.volces.com/api/v3",

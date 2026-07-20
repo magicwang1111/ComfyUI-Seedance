@@ -1,5 +1,7 @@
+import io
 import json
 import os
+import re
 import tempfile
 import urllib.parse
 import wave
@@ -8,8 +10,10 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import folder_paths
+import av
 import numpy
 import PIL.Image
+import torch
 
 from .api import (
     AssetAPIError,
@@ -21,6 +25,10 @@ from .api import (
     DEFAULT_ASSET_POLL_INTERVAL,
     DEFAULT_ASSET_TIMEOUT,
     DEFAULT_ASSET_WAIT_TIMEOUT,
+    DEFAULT_SPEECH_BASE_URL,
+    DEFAULT_SPEECH_POLL_INTERVAL,
+    DEFAULT_SPEECH_REQUEST_TIMEOUT,
+    DEFAULT_SPEECH_WAIT_TIMEOUT,
     DEFAULT_OSS_SIGNED_URL_EXPIRES,
     DEFAULT_UPLOAD_TIMEOUT,
     IMAGE_DATA_URL_MAX_SIZE_BYTES,
@@ -30,6 +38,10 @@ from .api import (
     RATIO_OPTIONS,
     RESOLUTION_OPTIONS,
     VideoAPIError,
+    SpeechAPIError,
+    SpeechClient,
+    build_tts_payload,
+    build_voice_clone_payload,
     build_audio_reference_payload,
     build_asset_image_reference_payload,
     build_first_frame_payload,
@@ -44,6 +56,7 @@ from .api import (
     submit_video_generation,
     upload_file_to_public_url,
     wait_for_video_completion,
+    voice_status_name,
 )
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -58,6 +71,36 @@ DEFAULT_POLL_INTERVAL = 15.0
 DEFAULT_REQUEST_TIMEOUT = 60
 DEFAULT_UPLOAD_TIMEOUT_SECONDS = DEFAULT_UPLOAD_TIMEOUT
 DEFAULT_ASSET_PROJECT_NAME = "default"
+LANGUAGE_OPTIONS = {
+    "cn": 0,
+    "en": 1,
+    "ja": 2,
+    "es": 3,
+    "id": 4,
+    "pt": 5,
+    "de": 6,
+    "fr": 7,
+    "ko": 8,
+    "it": 9,
+    "th": 10,
+    "vi": 11,
+    "ru": 12,
+    "fil": 13,
+    "ms": 14,
+    "ar": 15,
+    "mx": 16,
+    "pt-br": 17,
+    "pl": 19,
+    "tr": 20,
+    "sv": 21,
+}
+EXPLICIT_LANGUAGE_OPTIONS = ["auto", "zh-cn", "en", "ja", "es-mx", "id", "pt-br", "pt", "ko", "it", "de", "fr", "th", "vi", "ru", "fil", "ms", "ar", "pl", "tr", "sv"]
+VOICE_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{6,254}[A-Za-z0-9]$")
+VOICE_ID_RESERVED_PREFIXES = (
+    "s_", "icl_", "mix_", "dit_", "bv", "wvae_", "moon_", "mercury_", "venus_", "earth_",
+    "mars_", "jupiter_", "saturn_", "uranus_", "neptune_", "pluto_", "umm_",
+)
+VOICE_ID_RESERVED_SUFFIXES = ("_bigtts", "_bigtts_cc", "_tob", "_cs_tob", "_streaming")
 ASSET_TYPE_OPTIONS = ["Image", "Video", "Audio"]
 DEFAULT_ASSET_MODEL_PROMPT = (
     "图片1中的模特穿上图片2中的服装，保持图片1的人脸身份、发型和身材特征一致，"
@@ -213,6 +256,44 @@ def _resolve_request_timeout(config_data):
     return DEFAULT_REQUEST_TIMEOUT
 
 
+def _resolve_speech_api_key(config_data):
+    if _json_value_present(config_data, "speech_api_key"):
+        return str(config_data["speech_api_key"]).strip()
+
+    env_value = _load_env_value("SEEDANCE_SPEECH_API_KEY")
+    if env_value:
+        return env_value
+
+    raise ValueError(
+        "A speech_api_key is required for voice cloning and speech synthesis. "
+        "Add speech_api_key to config.local.json or set SEEDANCE_SPEECH_API_KEY."
+    )
+
+
+def _resolve_speech_base_url(config_data):
+    if _json_value_present(config_data, "speech_base_url"):
+        return str(config_data["speech_base_url"]).strip().rstrip("/")
+    return DEFAULT_SPEECH_BASE_URL
+
+
+def _resolve_speech_request_timeout(config_data):
+    if _json_value_present(config_data, "speech_request_timeout"):
+        return _parse_request_timeout(config_data["speech_request_timeout"])
+    return DEFAULT_SPEECH_REQUEST_TIMEOUT
+
+
+def _resolve_speech_poll_interval(config_data):
+    if _json_value_present(config_data, "speech_poll_interval"):
+        return _parse_poll_interval(config_data["speech_poll_interval"])
+    return DEFAULT_SPEECH_POLL_INTERVAL
+
+
+def _resolve_speech_wait_timeout(config_data):
+    if _json_value_present(config_data, "speech_wait_timeout"):
+        return _parse_request_timeout(config_data["speech_wait_timeout"])
+    return DEFAULT_SPEECH_WAIT_TIMEOUT
+
+
 def _resolve_upload_timeout(config_data):
     if _json_value_present(config_data, "upload_timeout"):
         return _parse_request_timeout(config_data["upload_timeout"])
@@ -323,6 +404,17 @@ def _create_upload_timeout():
     return _resolve_upload_timeout(config_data)
 
 
+def _create_speech_client():
+    config_data = _load_json_config()
+    return SpeechClient(
+        _resolve_speech_api_key(config_data),
+        timeout=_resolve_speech_request_timeout(config_data),
+        base_url=_resolve_speech_base_url(config_data),
+        poll_interval=_resolve_speech_poll_interval(config_data),
+        wait_timeout=_resolve_speech_wait_timeout(config_data),
+    )
+
+
 def _resolve_oss_endpoint(config_data):
     if _json_value_present(config_data, "oss_endpoint"):
         return str(config_data["oss_endpoint"]).strip()
@@ -418,6 +510,15 @@ def _runtime_client():
 @contextmanager
 def _asset_client():
     client = _create_asset_client()
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@contextmanager
+def _speech_client():
+    client = _create_speech_client()
     try:
         yield client
     finally:
@@ -841,6 +942,134 @@ def _upload_audio_file(audio):
 
 def _upload_audio_reference(audio):
     return _upload_audio_file(audio)
+
+
+def _validate_custom_speaker_id(value):
+    custom_speaker_id = str(value or "").strip()
+    if not VOICE_ID_PATTERN.fullmatch(custom_speaker_id):
+        raise ValueError(
+            "custom_speaker_id must be 8-256 characters, start with a letter, end with a letter or digit, "
+            "and contain only letters, digits, hyphens, or underscores."
+        )
+    lowered = custom_speaker_id.lower()
+    if re.match(r"^[a-z]{2}_", custom_speaker_id):
+        raise ValueError("custom_speaker_id must not start with a reserved two-letter language prefix.")
+    if lowered.startswith(VOICE_ID_RESERVED_PREFIXES) or lowered.endswith(VOICE_ID_RESERVED_SUFFIXES):
+        raise ValueError("custom_speaker_id conflicts with a reserved official voice name.")
+    return custom_speaker_id
+
+
+def _validate_demo_text(value):
+    demo_text = str(value or "").strip()
+    if not 4 <= len(demo_text) <= 300:
+        raise ValueError("demo_text must contain 4-300 characters.")
+    return demo_text
+
+
+def _audio_to_wav_bytes(audio):
+    if audio is None:
+        raise ValueError("audio is required.")
+    waveform = audio["waveform"]
+    if hasattr(waveform, "detach"):
+        waveform = waveform.detach()
+    if hasattr(waveform, "cpu"):
+        waveform = waveform.cpu()
+    if hasattr(waveform, "numpy"):
+        waveform = waveform.numpy()
+    samples = numpy.asarray(waveform, dtype=numpy.float32)
+    if samples.ndim == 3:
+        if samples.shape[0] == 0:
+            raise ValueError("audio waveform batch is empty.")
+        samples = samples[0]
+    if samples.ndim == 1:
+        samples = samples[numpy.newaxis, :]
+    if samples.ndim != 2 or samples.shape[0] == 0 or samples.shape[1] == 0:
+        raise ValueError("audio waveform must contain channels and samples.")
+    # Voice Clone 2.0 works best with a single-track prompt. Average channels
+    # only for training; other audio upload paths preserve their source layout.
+    if samples.shape[0] > 1:
+        samples = samples.mean(axis=0, keepdims=True)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+        temp_path = handle.name
+    try:
+        _write_audio_waveform_wav(temp_path, samples, audio["sample_rate"])
+        return Path(temp_path).read_bytes()
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def _decode_audio_bytes(audio_bytes):
+    if not audio_bytes:
+        raise ValueError("Downloaded audio is empty.")
+    with av.open(io.BytesIO(audio_bytes)) as audio_file:
+        if not audio_file.streams.audio:
+            raise ValueError("Downloaded media contains no audio stream.")
+        stream = audio_file.streams.audio[0]
+        sample_rate = int(stream.codec_context.sample_rate)
+        channels = int(stream.channels)
+        frames = []
+        for frame in audio_file.decode(streams=stream.index):
+            samples = torch.from_numpy(frame.to_ndarray())
+            if samples.shape[0] != channels:
+                samples = samples.view(-1, channels).t()
+            if samples.dtype == torch.int16:
+                samples = samples.float() / (2 ** 15)
+            elif samples.dtype == torch.int32:
+                samples = samples.float() / (2 ** 31)
+            elif not samples.dtype.is_floating_point:
+                raise ValueError(f"Unsupported decoded audio dtype: {samples.dtype}.")
+            frames.append(samples.float())
+        if not frames:
+            raise ValueError("Downloaded media contains no decodable audio frames.")
+    return {"waveform": torch.cat(frames, dim=1).unsqueeze(0), "sample_rate": sample_rate}
+
+
+def _pcm16_audio(audio_bytes, sample_rate=24000):
+    if not audio_bytes:
+        raise ValueError("Speech synthesis returned empty PCM audio.")
+    if len(audio_bytes) % 2:
+        raise ValueError("Speech synthesis returned an odd number of PCM16 bytes.")
+    samples = numpy.frombuffer(audio_bytes, dtype="<i2").astype(numpy.float32) / 32768.0
+    waveform = torch.from_numpy(samples.copy()).reshape(1, 1, -1)
+    return {"waveform": waveform, "sample_rate": int(sample_rate)}
+
+
+def _json_result(value):
+    return json.dumps(value, ensure_ascii=False, indent=2)
+
+
+def _response_int(result, key, default=-1):
+    try:
+        return int(result.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _download_demo_audio(client, result, required=False):
+    demo_audio_url = ""
+    speaker_status = result.get("speaker_status")
+    if isinstance(speaker_status, list):
+        model_candidates = [entry for entry in speaker_status if isinstance(entry, dict)]
+        model_candidates.sort(key=lambda entry: int(entry.get("model_type") or 0) != 5)
+        for entry in model_candidates:
+            demo_audio_url = str(entry.get("demo_audio") or "").strip()
+            if demo_audio_url:
+                break
+    if not demo_audio_url:
+        demo_audio_url = str(result.get("demo_audio") or "").strip()
+    if not demo_audio_url:
+        if required:
+            raise ValueError("Voice training succeeded but the response did not contain demo_audio.")
+        return None
+    return _decode_audio_bytes(client.download_audio(demo_audio_url))
+
+
+def _speech_api_error_message(exc):
+    if exc.status_code in {401, 403}:
+        guidance = "Check speech_api_key and enable both Voice Clone 2.0 and the postpaid voice service in the same project."
+        return f"{exc} {guidance}"
+    return str(exc)
 
 
 def _normalize_optional_string(value):
@@ -1556,6 +1785,190 @@ class SeedanceTrustedPersonAssetNode:
         )
         asset_uri, _group_id, asset_id, _asset_type, status, asset_url = upload_result["result"]
         return {"result": (asset_uri, normalized_group_id, asset_id, status, asset_url)}
+
+
+class VoiceCloneV3TrainNode:
+    RETURN_TYPES = ("STRING", "STRING", "INT", "AUDIO", "STRING")
+    RETURN_NAMES = ("custom_speaker_id", "status", "available_training_times", "demo_audio", "result_json")
+    FUNCTION = "train"
+    CATEGORY = NODE_CATEGORY
+    DESCRIPTION = "Train and audition a V3 postpaid custom voice without activating the 138 CNY formal TTS slot."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audio": ("AUDIO",),
+                "custom_speaker_id": ("STRING", {"default": ""}),
+                "language": (list(LANGUAGE_OPTIONS), {"default": "cn"}),
+                "demo_text": ("STRING", {"multiline": True, "default": ""}),
+                "enable_audio_denoise": ("BOOLEAN", {"default": False}),
+                "disable_volume_normalization": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "reference_text": ("STRING", {"multiline": True, "default": ""}),
+            },
+        }
+
+    def train(
+        self,
+        audio,
+        custom_speaker_id,
+        language,
+        demo_text,
+        enable_audio_denoise=False,
+        disable_volume_normalization=False,
+        reference_text="",
+    ):
+        voice_id = _validate_custom_speaker_id(custom_speaker_id)
+        normalized_demo_text = _validate_demo_text(demo_text)
+        audio_bytes = _audio_to_wav_bytes(audio)
+        payload = build_voice_clone_payload(
+            voice_id,
+            audio_bytes,
+            LANGUAGE_OPTIONS[language],
+            normalized_demo_text,
+            reference_text=str(reference_text or "").strip(),
+            enable_audio_denoise=enable_audio_denoise,
+            disable_volume_normalization=disable_volume_normalization,
+        )
+        try:
+            with _speech_client() as client:
+                submission = client.train_voice(payload)
+                result = client.wait_for_voice(voice_id)
+                demo_audio = _download_demo_audio(client, result, required=True)
+        except SpeechAPIError as exc:
+            raise ValueError(_speech_api_error_message(exc)) from exc
+
+        status = voice_status_name(result.get("status"))
+        available_training_times = _response_int(result, "available_training_times")
+        print(f"[{NODE_PREFIX}] voice clone succeeded custom_speaker_id={voice_id} status={status}")
+        return {
+            "result": (
+                voice_id,
+                status,
+                available_training_times,
+                demo_audio,
+                _json_result({"submission": submission, "voice": result}),
+            )
+        }
+
+
+class VoiceCloneV3QueryNode:
+    RETURN_TYPES = ("STRING", "STRING", "INT", "INT", "INT", "AUDIO", "STRING")
+    RETURN_NAMES = (
+        "custom_speaker_id",
+        "status",
+        "available_training_times",
+        "create_time",
+        "language",
+        "demo_audio",
+        "result_json",
+    )
+    FUNCTION = "query"
+    CATEGORY = NODE_CATEGORY
+    DESCRIPTION = "Query a V3 postpaid custom voice without activating it for formal TTS."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"custom_speaker_id": ("STRING", {"default": ""})}}
+
+    def query(self, custom_speaker_id):
+        voice_id = _validate_custom_speaker_id(custom_speaker_id)
+        try:
+            with _speech_client() as client:
+                result = client.get_voice(voice_id)
+                demo_audio = _download_demo_audio(client, result)
+        except SpeechAPIError as exc:
+            raise ValueError(_speech_api_error_message(exc)) from exc
+        return {
+            "result": (
+                voice_id,
+                voice_status_name(result.get("status")),
+                _response_int(result, "available_training_times"),
+                _response_int(result, "create_time", 0),
+                _response_int(result, "language"),
+                demo_audio,
+                _json_result(result),
+            )
+        }
+
+
+class VoiceCloneV3TTSNode:
+    RETURN_TYPES = ("AUDIO", "INT", "STRING")
+    RETURN_NAMES = ("audio", "billed_characters", "result_json")
+    FUNCTION = "synthesize"
+    CATEGORY = NODE_CATEGORY
+    DESCRIPTION = (
+        "Formal seed-icl-2.0 synthesis. The first call activates the postpaid voice, charges the 138 CNY slot fee, "
+        "and permanently prevents retraining."
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "text": ("STRING", {"multiline": True, "default": ""}),
+                "custom_speaker_id": ("STRING", {"default": ""}),
+                "speech_rate": ("INT", {"default": 0, "min": -50, "max": 100, "step": 1}),
+                "loudness_rate": ("INT", {"default": 0, "min": -50, "max": 100, "step": 1}),
+                "pitch": ("INT", {"default": 0, "min": -12, "max": 12, "step": 1}),
+                "explicit_language": (EXPLICIT_LANGUAGE_OPTIONS, {"default": "auto"}),
+                "tone_fidelity": ("BOOLEAN", {"default": False}),
+                "confirm_activation_fee": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "voice_instruction": ("STRING", {"multiline": True, "default": ""}),
+                "previous_context": ("STRING", {"multiline": True, "default": ""}),
+            },
+        }
+
+    def synthesize(
+        self,
+        text,
+        custom_speaker_id,
+        speech_rate=0,
+        loudness_rate=0,
+        pitch=0,
+        explicit_language="auto",
+        tone_fidelity=False,
+        confirm_activation_fee=False,
+        voice_instruction="",
+        previous_context="",
+    ):
+        if not confirm_activation_fee:
+            raise ValueError(
+                "Formal TTS is blocked. Enable confirm_activation_fee only after auditioning the voice; "
+                "the first call charges the 138 CNY slot fee and permanently prevents retraining."
+            )
+        normalized_text = str(text or "").strip()
+        if not normalized_text:
+            raise ValueError("text is required.")
+        voice_id = _validate_custom_speaker_id(custom_speaker_id)
+        context_texts = [
+            value
+            for value in (
+                str(previous_context or "").strip(),
+                str(voice_instruction or "").strip(),
+            )
+            if value
+        ]
+        payload = build_tts_payload(
+            normalized_text,
+            voice_id,
+            speech_rate=speech_rate,
+            loudness_rate=loudness_rate,
+            pitch=pitch,
+            explicit_language="" if explicit_language == "auto" else explicit_language,
+            tone_fidelity=tone_fidelity,
+            context_texts=context_texts,
+        )
+        try:
+            with _speech_client() as client:
+                pcm_bytes, billed_characters, result = client.synthesize(payload)
+        except SpeechAPIError as exc:
+            raise ValueError(_speech_api_error_message(exc)) from exc
+        return {"result": (_pcm16_audio(pcm_bytes), billed_characters, _json_result(result))}
 
 
 class PreviewVideoNode:

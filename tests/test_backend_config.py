@@ -1,4 +1,5 @@
 import importlib
+import io
 import json
 import os
 import sys
@@ -35,6 +36,7 @@ ENV_KEYS = {
     "SEEDANCE_POLL_INTERVAL": "",
     "SEEDANCE_REQUEST_TIMEOUT": "",
     "SEEDANCE_UPLOAD_TIMEOUT": "",
+    "SEEDANCE_SPEECH_API_KEY": "",
     "OSS_ENDPOINT": "",
     "OSS_ACCESS_KEY_ID": "",
     "OSS_ACCESS_KEY_SECRET": "",
@@ -169,7 +171,7 @@ class FakeVideoReference:
 
 class BackendConfigTests(unittest.TestCase):
     def test_node_mapping_contains_all_generation_and_preview_nodes(self):
-        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 11)
+        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 14)
         self.assertIn("ComfyUI-Seedance Text-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance First-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance First-Last-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
@@ -181,6 +183,79 @@ class BackendConfigTests(unittest.TestCase):
         self.assertIn("ComfyUI-Seedance Upload Image Asset", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Multimodal-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Preview Video", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance Voice Clone V3 Train", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance Voice Clone V3 Query", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance Voice Clone V3 TTS", seedance_package.NODE_CLASS_MAPPINGS)
+
+    def test_voice_clone_nodes_expose_expected_inputs_and_fee_guard(self):
+        train_inputs = seedance_nodes.VoiceCloneV3TrainNode.INPUT_TYPES()
+        self.assertEqual(train_inputs["required"]["audio"], ("AUDIO",))
+        self.assertIn("custom_speaker_id", train_inputs["required"])
+        self.assertIn("demo_text", train_inputs["required"])
+
+        query_inputs = seedance_nodes.VoiceCloneV3QueryNode.INPUT_TYPES()
+        self.assertEqual(list(query_inputs["required"]), ["custom_speaker_id"])
+
+        tts_node = seedance_nodes.VoiceCloneV3TTSNode()
+        tts_inputs = tts_node.INPUT_TYPES()
+        self.assertIn("voice_instruction", tts_inputs["optional"])
+        self.assertIn("previous_context", tts_inputs["optional"])
+        with self.assertRaisesRegex(ValueError, "138 CNY"):
+            tts_node.synthesize("测试", "custom_cn_20260720_a1b2c3d4", confirm_activation_fee=False)
+
+    def test_custom_speaker_id_and_demo_text_validation(self):
+        valid = "custom_cn_20260720_a1b2c3d4"
+        self.assertEqual(seedance_nodes._validate_custom_speaker_id(valid), valid)
+        with self.assertRaisesRegex(ValueError, "8-256"):
+            seedance_nodes._validate_custom_speaker_id("bad")
+        with self.assertRaisesRegex(ValueError, "reserved"):
+            seedance_nodes._validate_custom_speaker_id("S_reserved_voice")
+        with self.assertRaisesRegex(ValueError, "4-300"):
+            seedance_nodes._validate_demo_text("短")
+
+    def test_voice_training_wav_is_mono(self):
+        waveform = numpy.stack(
+            [numpy.full(800, 0.25, dtype=numpy.float32), numpy.full(800, -0.25, dtype=numpy.float32)]
+        )[numpy.newaxis, :, :]
+        wav_bytes = seedance_nodes._audio_to_wav_bytes({"waveform": waveform, "sample_rate": 16000})
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wav_file:
+            self.assertEqual(wav_file.getnchannels(), 1)
+            self.assertEqual(wav_file.getframerate(), 16000)
+
+    def test_voice_demo_download_prefers_seed_icl_2_model(self):
+        client = mock.Mock()
+        client.download_audio.return_value = b"demo-bytes"
+        result = {
+            "demo_audio": "https://example.com/v1-top.wav",
+            "speaker_status": [
+                {"model_type": 1, "demo_audio": "https://example.com/v1.wav"},
+                {"model_type": 5, "demo_audio": "https://example.com/v2.wav"},
+            ],
+        }
+        with mock.patch.object(seedance_nodes, "_decode_audio_bytes", return_value={"sample_rate": 24000}):
+            audio = seedance_nodes._download_demo_audio(client, result, required=True)
+        client.download_audio.assert_called_once_with("https://example.com/v2.wav")
+        self.assertEqual(audio["sample_rate"], 24000)
+
+    def test_speech_permission_error_explains_required_services(self):
+        error = seedance_nodes.SpeechAPIError(
+            403,
+            code=45000030,
+            message="requested resource not granted",
+            logid="log-voice-permission",
+        )
+        message = seedance_nodes._speech_api_error_message(error)
+        self.assertIn("Voice Clone 2.0", message)
+        self.assertIn("postpaid voice service", message)
+        self.assertIn("log-voice-permission", message)
+
+    def test_speech_api_key_is_resolved_independently(self):
+        with mock.patch.dict(os.environ, {"SEEDANCE_SPEECH_API_KEY": "speech-env-key"}, clear=False):
+            self.assertEqual(seedance_nodes._resolve_speech_api_key({}), "speech-env-key")
+            self.assertEqual(
+                seedance_nodes._resolve_speech_api_key({"speech_api_key": "speech-json-key", "api_key": "ark-key"}),
+                "speech-json-key",
+            )
 
     def test_model_options_include_seedance_models(self):
         self.assertEqual(

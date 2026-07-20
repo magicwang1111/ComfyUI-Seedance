@@ -2,7 +2,7 @@
 
 `ComfyUI-Seedance` is a small ComfyUI custom node pack for generating Seedance videos through Volcengine Ark or LAS.
 
-It exposes eleven nodes under the `ComfyUI-Seedance` category:
+It exposes fourteen nodes under the `ComfyUI-Seedance` category:
 
 - `ComfyUI-Seedance Text-to-Video`
 - `ComfyUI-Seedance First-Frame-to-Video`
@@ -15,6 +15,9 @@ It exposes eleven nodes under the `ComfyUI-Seedance` category:
 - `ComfyUI-Seedance Upload Image Asset`
 - `ComfyUI-Seedance Multimodal-to-Video`
 - `ComfyUI-Seedance Preview Video`
+- `ComfyUI-Seedance Voice Clone V3 Train`
+- `ComfyUI-Seedance Voice Clone V3 Query`
+- `ComfyUI-Seedance Voice Clone V3 TTS`
 
 ## What It Supports
 
@@ -40,6 +43,17 @@ It exposes eleven nodes under the `ComfyUI-Seedance` category:
 - Direct `asset://asset-...` references for image / video / audio slots in generation nodes
 - Real-person validation from the `Trusted Person Asset` node UI is Ark-only
 - A standalone `Preview Video` node for explicit playback and saving
+- V3 postpaid custom-voice training, status lookup, audition download, and formal `seed-icl-2.0` synthesis
+
+## V3 Postpaid Voice Clone
+
+The speech nodes use the new-console speech API key and are independent from Ark/LAS video credentials.
+
+1. `Voice Clone V3 Train` converts a ComfyUI `AUDIO` input to mono WAV, submits `/voice_clone`, polls `/get_voice`, and returns the temporary audition audio. The browser generates a persistent `custom_speaker_id` when a new node is created; use the node button when a fresh ID is needed. For best results, use a clean 14-30 second, single-speaker prompt with consistent emotion; the supplied language must match the recording.
+2. `Voice Clone V3 Query` performs one `/get_voice` lookup for a manually entered or connected `custom_speaker_id` and downloads `demo_audio` when available.
+3. `Voice Clone V3 TTS` performs formal HTTP Chunked synthesis with `X-Api-Resource-Id: seed-icl-2.0` and aggregates the PCM stream into ComfyUI `AUDIO`.
+
+Postpaid warning: training and audition do not activate the 138 CNY voice slot, but audition text is still billed by character. The first formal TTS call activates the slot and permanently prevents retraining. The TTS node therefore refuses to send a request until `confirm_activation_fee` is enabled. Temporary audition-only voices are removed by the platform if they are not formally used within seven days.
 
 ## Mode Split
 
@@ -232,6 +246,11 @@ Create [config.local.json](./config.local.json) in the repository root. Use [con
 
 ```json
 {
+  "speech_api_key": "",
+  "speech_base_url": "https://openspeech.bytedance.com/api/v3/tts",
+  "speech_request_timeout": 60,
+  "speech_poll_interval": 5.0,
+  "speech_wait_timeout": 900,
   "api_provider": "ark",
   "api_key": "",
   "base_url": "https://ark.cn-beijing.volces.com/api/v3",
@@ -261,6 +280,7 @@ Create [config.local.json](./config.local.json) in the repository root. Use [con
 - `api_key` and `access_key_id` / `secret_access_key` are used only by Ark.
 - `las_api_key` is used by LAS generation and normal asset APIs. `LAS_DEFAULT_API_KEY` remains a compatible legacy config key.
 - `oss_*` fields configure the public upload bridge for local files.
+- `speech_api_key` is used only by the three V3 voice nodes. It is never used as an Ark or LAS credential.
 
 Supported environment variables:
 
@@ -286,6 +306,7 @@ Supported environment variables:
 - `SEEDANCE_ASSET_POLL_INTERVAL`
 - `SEEDANCE_ASSET_TIMEOUT`
 - `SEEDANCE_ASSET_WAIT_TIMEOUT`
+- `SEEDANCE_SPEECH_API_KEY`
 
 Priority:
 
@@ -304,7 +325,8 @@ Priority:
 3. Add `config.local.json` with `api_provider: "ark"` and an Ark API key, or with `api_provider: "las"` and `las_api_key`.
 4. Ark asset upload additionally needs `access_key_id` and `secret_access_key`; LAS asset upload needs only `las_api_key`.
 5. To use OSS relay for local media, also fill the `oss_*` fields or set the corresponding `OSS_*` environment variables.
-6. Restart ComfyUI.
+6. To use V3 voice cloning, add the separate new-console `speech_api_key` or set `SEEDANCE_SPEECH_API_KEY`.
+7. Restart ComfyUI.
 
 ## Node Interfaces
 
@@ -508,6 +530,20 @@ Notes:
 - With `save_output=true`, it downloads the MP4 to ComfyUI output first, then previews the local file.
 - Saving is enabled by default. Files are stored as `Seedance_YYYYMMDD_HHMMSS_00001_.mp4`, so they sort in timeline order.
 
+### Voice Clone V3 Train
+
+Inputs: `audio`, `custom_speaker_id`, `language`, `demo_text`, denoise/normalization controls, and optional `reference_text`.
+
+Outputs: `custom_speaker_id`, status, remaining training count, audition `AUDIO`, and result JSON.
+
+### Voice Clone V3 Query
+
+Input: `custom_speaker_id`. Outputs status metadata, optional audition `AUDIO`, and result JSON without activating formal TTS.
+
+### Voice Clone V3 TTS
+
+Inputs: text, `custom_speaker_id`, speech rate, loudness, pitch, explicit language, tone fidelity, optional `voice_instruction` / `previous_context`, and `confirm_activation_fee`. Non-empty context fields are sent through `additions.context_texts` (previous context first, then the voice instruction). Outputs formal `AUDIO`, billed characters, and result JSON. This node is intentionally fixed to `seed-icl-2.0`; the separate `seed-audio-1.0 /tts/create` audio-generation API is not used.
+
 ## Examples
 
 Starter workflow JSON files live in [examples/](./examples):
@@ -519,6 +555,8 @@ Starter workflow JSON files live in [examples/](./examples):
 - [05_comfyui_seedance_trusted_person_asset_workflow.json](./examples/05_comfyui_seedance_trusted_person_asset_workflow.json)
 - [06_comfyui_seedance_asset_group_and_upload_workflow.json](./examples/06_comfyui_seedance_asset_group_and_upload_workflow.json)
 - [07_comfyui_seedance_asset_uri_multimodal_workflow.json](./examples/07_comfyui_seedance_asset_uri_multimodal_workflow.json)
+- [08_comfyui_seedance_voice_clone_train_query_workflow.json](./examples/08_comfyui_seedance_voice_clone_train_query_workflow.json)
+- [09_comfyui_seedance_voice_clone_tts_workflow.json](./examples/09_comfyui_seedance_voice_clone_tts_workflow.json)
 
 See [examples/README.md](./examples/README.md) for a quick description of each one.
 

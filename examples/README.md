@@ -1,6 +1,6 @@
 # Examples
 
-This folder contains seven starter workflows for the split Seedance generation modes, trusted assets, OSS-backed asset upload, and the standalone preview node:
+This folder contains nine starter workflows for Seedance generation, assets, preview, and V3 postpaid custom voices:
 
 - `01_comfyui_seedance_text_workflow.json`
   Uses `ComfyUI-Seedance Text-to-Video` and pipes the returned `url` into `ComfyUI-Seedance Preview Video`.
@@ -22,5 +22,11 @@ This folder contains seven starter workflows for the split Seedance generation m
 
 - `07_comfyui_seedance_asset_uri_multimodal_workflow.json`
   Shows how to pass existing `asset://...` image, video, and audio references directly into `ComfyUI-Seedance Multimodal-to-Video` without local media loader nodes.
+
+- `08_comfyui_seedance_voice_clone_train_query_workflow.json`
+  Loads a sample, trains a V3 postpaid custom voice, and previews the audition. The disabled query branch can be enabled after entering an existing `custom_speaker_id`.
+
+- `09_comfyui_seedance_voice_clone_tts_workflow.json`
+  Shows formal `seed-icl-2.0` synthesis, including optional voice-instruction and previous-context inputs. The branch is disabled and `confirm_activation_fee` is false by default because the first request activates the 138 CNY voice slot.
 
 Prepare `config.local.json` first, then import the workflow you want to start from.

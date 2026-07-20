@@ -11,6 +11,9 @@ from .nodes import (
     SeedanceTrustedPersonAssetNode,
     SeedanceUploadAssetNode,
     SeedanceUploadImageAssetNode,
+    VoiceCloneV3QueryNode,
+    VoiceCloneV3TTSNode,
+    VoiceCloneV3TrainNode,
 )
 
 
@@ -30,6 +33,9 @@ NODE_CLASS_MAPPINGS = {
     _node_name("Upload Image Asset"): SeedanceUploadImageAssetNode,
     _node_name("Multimodal-to-Video"): SeedanceMultimodalNode,
     _node_name("Preview Video"): PreviewVideoNode,
+    _node_name("Voice Clone V3 Train"): VoiceCloneV3TrainNode,
+    _node_name("Voice Clone V3 Query"): VoiceCloneV3QueryNode,
+    _node_name("Voice Clone V3 TTS"): VoiceCloneV3TTSNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {key: key for key in NODE_CLASS_MAPPINGS}
