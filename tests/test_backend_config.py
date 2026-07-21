@@ -170,6 +170,46 @@ class FakeVideoReference:
 
 
 class BackendConfigTests(unittest.TestCase):
+    def test_download_to_file_does_not_forward_ark_authorization(self):
+        captured = {}
+
+        @contextmanager
+        def fake_stream(method, path, **kwargs):
+            captured.update({"method": method, "path": path, **kwargs})
+            yield httpx.Response(200, content=b"video-bytes", request=httpx.Request(method, path))
+
+        client = client_module.Client("ark-secret")
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_path = Path(tmpdir) / "video.mp4"
+                with mock.patch.object(client_module.httpx, "stream", fake_stream):
+                    client.download_to_file("https://storage.example.com/signed.mp4", output_path)
+                self.assertEqual(output_path.read_bytes(), b"video-bytes")
+        finally:
+            client.close()
+
+        self.assertNotIn("headers", captured)
+        self.assertTrue(captured["follow_redirects"])
+
+    def test_download_error_reads_stream_before_building_api_error(self):
+        @contextmanager
+        def fake_stream(method, path, **kwargs):
+            yield httpx.Response(
+                403,
+                stream=httpx.ByteStream(b"SignatureDoesNotMatch"),
+                request=httpx.Request(method, path),
+            )
+
+        client = client_module.Client("ark-secret")
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                output_path = Path(tmpdir) / "video.mp4"
+                with mock.patch.object(client_module.httpx, "stream", fake_stream):
+                    with self.assertRaisesRegex(client_module.VideoAPIError, "SignatureDoesNotMatch"):
+                        client.download_to_file("https://storage.example.com/signed.mp4", output_path)
+        finally:
+            client.close()
+
     def test_node_mapping_contains_all_generation_and_preview_nodes(self):
         self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 14)
         self.assertIn("ComfyUI-Seedance Text-to-Video", seedance_package.NODE_CLASS_MAPPINGS)

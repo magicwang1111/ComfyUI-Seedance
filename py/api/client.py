@@ -97,8 +97,11 @@ class Client:
 
     def download_to_file(self, path, file_path):
         try:
-            with self._client.stream("GET", path) as response:
+            # Result URLs point at third-party storage. Do not forward the Ark
+            # Bearer token: it can override or invalidate a signed download URL.
+            with httpx.stream("GET", path, timeout=self._client.timeout, follow_redirects=True) as response:
                 if response.status_code != 200:
+                    response.read()
                     raise VideoAPIError.from_response(response)
 
                 with open(file_path, "wb") as handle:
