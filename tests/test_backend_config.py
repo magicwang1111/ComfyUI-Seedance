@@ -942,11 +942,54 @@ class BackendConfigTests(unittest.TestCase):
         self.assertEqual(len(client.calls), 3)
         self.assertEqual(client.calls[0][0:2], ("GET", "/contents/generations/tasks/video-123"))
 
+    def test_ark_video_cost_uses_model_and_video_input_rates(self):
+        task_info = {"usage": {"total_tokens": 100000}}
+        cases = [
+            ("doubao-seedance-2-0-260128", False, 46.0, 4.6),
+            ("doubao-seedance-2-0-260128", True, 28.0, 2.8),
+            ("doubao-seedance-2-0-fast-260128", False, 37.0, 3.7),
+            ("doubao-seedance-2-0-fast-260128", True, 22.0, 2.2),
+            ("doubao-seedance-2-0-mini-260615", False, 23.0, 2.3),
+            ("doubao-seedance-2-0-mini-260615", True, 14.0, 1.4),
+        ]
+
+        for model, has_video_input, expected_rate, expected_cost in cases:
+            with self.subTest(model=model, has_video_input=has_video_input):
+                estimate = video_api.estimate_ark_video_cost(model, task_info, has_video_input)
+                self.assertEqual(estimate["total_tokens"], 100000)
+                self.assertEqual(estimate["unit_rate_cny_per_million"], expected_rate)
+                self.assertAlmostEqual(estimate["estimated_cost_cny"], expected_cost)
+
+    def test_video_usage_falls_back_to_completion_tokens(self):
+        self.assertEqual(
+            video_api.extract_video_usage_tokens({"usage": {"completion_tokens": 108900}}),
+            108900,
+        )
+        self.assertIsNone(video_api.extract_video_usage_tokens({"usage": {}}))
+        self.assertIsNone(video_api.extract_video_usage_tokens({"usage": {"total_tokens": "invalid"}}))
+
+    def test_video_input_detection_only_counts_video_references(self):
+        self.assertFalse(
+            seedance_nodes._payload_has_video_input(
+                {"content": [{"type": "text"}, {"type": "image_url"}, {"type": "audio_url"}]}
+            )
+        )
+        self.assertTrue(
+            seedance_nodes._payload_has_video_input(
+                {"content": [{"type": "text"}, {"type": "video_url"}]}
+            )
+        )
+
     def test_text_node_returns_remote_preview_url(self):
         fake_client = FakeVideoClient(
             [
                 {"id": "video-123"},
-                {"id": "video-123", "status": "succeeded", "content": {"video_url": "https://example.com/result.mp4"}},
+                {
+                    "id": "video-123",
+                    "status": "succeeded",
+                    "content": {"video_url": "https://example.com/result.mp4"},
+                    "usage": {"completion_tokens": 108900, "total_tokens": 108900},
+                },
             ]
         )
 
@@ -955,17 +998,23 @@ class BackendConfigTests(unittest.TestCase):
             yield fake_client
 
         with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
-            result = seedance_nodes.SeedanceTextNode().generate(
-                "doubao-seedance-2-0-fast-260128",
-                "A calm coastal scene.",
-                "720p",
-                "5",
-                "adaptive",
-                True,
-                False,
-            )
+            with mock.patch("builtins.print") as print_mock:
+                result = seedance_nodes.SeedanceTextNode().generate(
+                    "doubao-seedance-2-0-fast-260128",
+                    "A calm coastal scene.",
+                    "720p",
+                    "5",
+                    "adaptive",
+                    True,
+                    False,
+                )
 
-        self.assertNotIn("ui", result)
+        expected_summary = "Token 用量：108,900 tokens｜预估费用：¥4.0293（37 元/百万 tokens，不含视频输入）"
+        self.assertEqual(result["ui"]["seedance_cost"], [expected_summary])
+        print_mock.assert_called_once_with(
+            "[ComfyUI-Seedance] succeeded doubao-seedance-2-0-fast-260128 "
+            f"task_id=video-123 | {expected_summary}"
+        )
         self.assertEqual(fake_client.calls[0][0:2], ("POST", "/contents/generations/tasks"))
         self.assertEqual(
             result["result"],

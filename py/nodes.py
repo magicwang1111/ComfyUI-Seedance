@@ -50,8 +50,10 @@ from .api import (
     build_last_frame_payload,
     build_video_reference_payload,
     asset_uri_from_id,
+    estimate_ark_video_cost,
     extract_result_video_url,
     extract_task_id,
+    extract_video_usage_tokens,
     file_to_data_url,
     submit_video_generation,
     upload_file_to_public_url,
@@ -593,9 +595,41 @@ def _submit_and_wait(client, model_name, payload, provider):
     return task_id, task_info
 
 
-def _build_video_result(client, task_id, task_info):
+def _payload_has_video_input(payload):
+    content = payload.get("content") if isinstance(payload, dict) else None
+    return isinstance(content, list) and any(
+        isinstance(item, dict) and item.get("type") == "video_url" for item in content
+    )
+
+
+def _build_cost_summary(model_name, task_info, has_video_input, provider):
+    total_tokens = extract_video_usage_tokens(task_info)
+    if total_tokens is None:
+        return "Token 用量：API 未返回｜预估费用：不可用"
+
+    token_text = f"{total_tokens:,} tokens"
+    if provider != "ark":
+        return f"Token 用量：{token_text}｜预估费用：不可用（当前 {provider.upper()} 模式未配置单价）"
+
+    estimate = estimate_ark_video_cost(model_name, task_info, has_video_input)
+    if estimate is None:
+        return f"Token 用量：{token_text}｜预估费用：不可用（未知模型单价）"
+
+    input_label = "包含视频输入" if has_video_input else "不含视频输入"
+    unit_rate = estimate["unit_rate_cny_per_million"]
+    estimated_cost = estimate["estimated_cost_cny"]
+    return (
+        f"Token 用量：{token_text}｜预估费用：¥{estimated_cost:.4f}"
+        f"（{unit_rate:g} 元/百万 tokens，{input_label}）"
+    )
+
+
+def _build_video_result(client, task_id, task_info, cost_summary):
     remote_video_url = extract_result_video_url(client, task_id, task_info)
-    return {"result": (remote_video_url, task_id, "")}
+    return {
+        "ui": {"seedance_cost": [cost_summary]},
+        "result": (remote_video_url, task_id, ""),
+    }
 
 
 def _build_preview_result(video_url, filename_prefix, save_output):
@@ -659,8 +693,9 @@ def _build_generation_result(
             provider=provider,
         )
         task_id, task_info = _submit_and_wait(client, model, payload, provider)
-        print(f"[{NODE_PREFIX}] succeeded {model} task_id={task_id}")
-        return _build_video_result(client, task_id, task_info)
+        cost_summary = _build_cost_summary(model, task_info, _payload_has_video_input(payload), provider)
+        print(f"[{NODE_PREFIX}] succeeded {model} task_id={task_id} | {cost_summary}")
+        return _build_video_result(client, task_id, task_info, cost_summary)
 
 
 def _common_generation_inputs():

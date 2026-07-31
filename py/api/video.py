@@ -21,6 +21,11 @@ RATIO_OPTIONS = ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
 STANDARD_MODEL = "doubao-seedance-2-0-260128"
 FAST_MODEL = "doubao-seedance-2-0-fast-260128"
 MINI_MODEL = "doubao-seedance-2-0-mini-260615"
+ARK_VIDEO_TOKEN_RATES_CNY_PER_MILLION = {
+    STANDARD_MODEL: {"with_video_input": 28.0, "without_video_input": 46.0},
+    FAST_MODEL: {"with_video_input": 22.0, "without_video_input": 37.0},
+    MINI_MODEL: {"with_video_input": 14.0, "without_video_input": 23.0},
+}
 ACTIVE_VIDEO_STATUSES = {"queued", "pending", "running", "in_progress"}
 FAILURE_VIDEO_STATUSES = {"failed", "error", "cancelled", "canceled", "expired"}
 COMPLETED_VIDEO_STATUS = "succeeded"
@@ -231,6 +236,44 @@ def wait_for_video_completion(client, task_id):
             raise RuntimeError(f"Unexpected video task status: {status or 'unknown'}.")
 
         time.sleep(client.poll_interval)
+
+
+def extract_video_usage_tokens(task_info):
+    if not isinstance(task_info, dict):
+        return None
+
+    usage = task_info.get("usage")
+    if not isinstance(usage, dict):
+        return None
+
+    raw_tokens = usage.get("total_tokens")
+    if raw_tokens is None:
+        raw_tokens = usage.get("completion_tokens")
+    if isinstance(raw_tokens, bool):
+        return None
+
+    try:
+        tokens = int(raw_tokens)
+    except (TypeError, ValueError):
+        return None
+
+    return tokens if tokens >= 0 else None
+
+
+def estimate_ark_video_cost(model_name, task_info, has_video_input):
+    total_tokens = extract_video_usage_tokens(task_info)
+    rates = ARK_VIDEO_TOKEN_RATES_CNY_PER_MILLION.get(str(model_name).strip())
+    if total_tokens is None or rates is None:
+        return None
+
+    rate_key = "with_video_input" if has_video_input else "without_video_input"
+    unit_rate = rates[rate_key]
+    return {
+        "total_tokens": total_tokens,
+        "unit_rate_cny_per_million": unit_rate,
+        "estimated_cost_cny": total_tokens * unit_rate / 1_000_000,
+        "has_video_input": bool(has_video_input),
+    }
 
 
 def extract_task_id(client, submission):
