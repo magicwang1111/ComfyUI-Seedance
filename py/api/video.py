@@ -9,14 +9,19 @@ MODEL_OPTIONS = [
     "doubao-seedance-2-0-fast-260128",
     "doubao-seedance-2-0-mini-260615",
 ]
+SEEDANCE_25_MODEL = "doubao-seedance-2-5-260628"
+ARK_MODEL_OPTIONS = [*MODEL_OPTIONS, SEEDANCE_25_MODEL]
 LAS_MODEL_OPTIONS = [
     "doubao-seedance-2-0-260128",
     "doubao-seedance-2-0-fast-260128",
 ]
 RESOLUTION_OPTIONS = ["480p", "720p", "1080p", "4k"]
+SEEDANCE_25_RESOLUTION_OPTIONS = ["480p", "720p", "1080p"]
 DURATION_OPTIONS = ["-1"] + [str(value) for value in range(4, 16)]
 NODE_DURATION_OPTIONS = [str(value) for value in range(4, 16)]
 RATIO_OPTIONS = ["adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
+SEEDANCE_25_DURATION_OPTIONS = ["-1"] + [str(value) for value in range(4, 31)]
+SEEDANCE_25_TASK_TYPE_OPTIONS = ["auto", "reference", "edit", "extend"]
 
 STANDARD_MODEL = "doubao-seedance-2-0-260128"
 FAST_MODEL = "doubao-seedance-2-0-fast-260128"
@@ -25,6 +30,10 @@ ARK_VIDEO_TOKEN_RATES_CNY_PER_MILLION = {
     STANDARD_MODEL: {"with_video_input": 28.0, "without_video_input": 46.0},
     FAST_MODEL: {"with_video_input": 22.0, "without_video_input": 37.0},
     MINI_MODEL: {"with_video_input": 14.0, "without_video_input": 23.0},
+    SEEDANCE_25_MODEL: {
+        "with_video_input": {"480p": 42.0, "720p": 42.0, "1080p": 46.0},
+        "without_video_input": {"480p": 70.0, "720p": 70.0, "1080p": 77.0},
+    },
 }
 ACTIVE_VIDEO_STATUSES = {"queued", "pending", "running", "in_progress"}
 FAILURE_VIDEO_STATUSES = {"failed", "error", "cancelled", "canceled", "expired"}
@@ -42,7 +51,7 @@ def _clean_prompt(prompt, required=True):
 
 def _validate_model_name(model_name, provider="ark"):
     normalized = str(model_name).strip()
-    allowed_models = LAS_MODEL_OPTIONS if provider == "las" else MODEL_OPTIONS
+    allowed_models = LAS_MODEL_OPTIONS if provider == "las" else ARK_MODEL_OPTIONS
     if normalized not in allowed_models:
         raise ValueError(f"{provider} model must be one of: {', '.join(allowed_models)}.")
     return normalized
@@ -188,6 +197,100 @@ def build_generation_payload(
     }
 
 
+def build_seedance_25_omni_payload(
+    model_name,
+    prompt,
+    task_type,
+    resolution,
+    duration,
+    ratio,
+    generate_audio,
+    watermark,
+    content,
+):
+    validated_model = _validate_model_name(model_name)
+    if validated_model != SEEDANCE_25_MODEL:
+        raise ValueError(f"Seedance 2.5 Omni model must be {SEEDANCE_25_MODEL}.")
+
+    normalized_task_type = str(task_type).strip().lower()
+    if normalized_task_type not in SEEDANCE_25_TASK_TYPE_OPTIONS:
+        raise ValueError(
+            "omni_reference_task_type must be one of: "
+            + ", ".join(SEEDANCE_25_TASK_TYPE_OPTIONS)
+            + "."
+        )
+
+    normalized_resolution = str(resolution).strip().lower()
+    if normalized_resolution not in SEEDANCE_25_RESOLUTION_OPTIONS:
+        raise ValueError(
+            "Seedance 2.5 resolution must be one of: "
+            + ", ".join(SEEDANCE_25_RESOLUTION_OPTIONS)
+            + "."
+        )
+
+    normalized_duration = _validate_seedance_25_duration(duration)
+    normalized_ratio = _validate_ratio(ratio)
+
+    if not isinstance(content, list) or not content:
+        raise ValueError("Seedance 2.5 Omni requires at least one image, video, or audio reference.")
+
+    allowed_roles = {
+        "image_url": "reference_image",
+        "video_url": "reference_video",
+        "audio_url": "reference_audio",
+    }
+    counts = {content_type: 0 for content_type in allowed_roles}
+    for item in content:
+        if not isinstance(item, dict) or item.get("type") not in allowed_roles:
+            raise ValueError("Seedance 2.5 Omni content must contain only reference image, video, or audio items.")
+        content_type = item["type"]
+        if item.get("role") != allowed_roles[content_type]:
+            raise ValueError(f"{content_type} role must be {allowed_roles[content_type]}.")
+        counts[content_type] += 1
+
+    limits = {"image_url": 30, "video_url": 10, "audio_url": 10}
+    for content_type, limit in limits.items():
+        if counts[content_type] > limit:
+            raise ValueError(f"Seedance 2.5 Omni supports at most {limit} {content_type} references.")
+
+    if normalized_task_type in {"edit", "extend"} and not counts["video_url"]:
+        raise ValueError(f"Seedance 2.5 Omni {normalized_task_type} requires at least one video reference.")
+    if normalized_task_type in {"edit", "extend"} and normalized_ratio != "adaptive":
+        raise ValueError(f"Seedance 2.5 Omni {normalized_task_type} requires ratio=adaptive.")
+    if normalized_task_type == "edit" and normalized_duration != -1:
+        raise ValueError("Seedance 2.5 Omni edit requires duration=-1.")
+
+    request_content = []
+    cleaned_prompt = _clean_prompt(prompt, required=False)
+    if cleaned_prompt:
+        request_content.append({"type": "text", "text": cleaned_prompt})
+    request_content.extend(content)
+
+    return {
+        "model": validated_model,
+        "content": request_content,
+        "omni_reference_task_type": normalized_task_type,
+        "resolution": normalized_resolution,
+        "duration": normalized_duration,
+        "ratio": normalized_ratio,
+        "generate_audio": bool(generate_audio),
+        "watermark": bool(watermark),
+        "output_format": "mp4",
+    }
+
+
+def _validate_seedance_25_duration(duration):
+    if isinstance(duration, bool):
+        raise ValueError("duration must be an integer.")
+    try:
+        normalized = int(str(duration).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("duration must be an integer.") from exc
+    if normalized == -1 or 4 <= normalized <= 30:
+        return normalized
+    raise ValueError("Seedance 2.5 duration must be -1 or an integer from 4 to 30.")
+
+
 def submit_video_generation(client, model_name, payload, provider="ark"):
     _validate_model_name(model_name, provider=provider)
     return client.request("POST", "/contents/generations/tasks", json=payload)
@@ -260,7 +363,7 @@ def extract_video_usage_tokens(task_info):
     return tokens if tokens >= 0 else None
 
 
-def estimate_ark_video_cost(model_name, task_info, has_video_input):
+def estimate_ark_video_cost(model_name, task_info, has_video_input, resolution=None):
     total_tokens = extract_video_usage_tokens(task_info)
     rates = ARK_VIDEO_TOKEN_RATES_CNY_PER_MILLION.get(str(model_name).strip())
     if total_tokens is None or rates is None:
@@ -268,6 +371,11 @@ def estimate_ark_video_cost(model_name, task_info, has_video_input):
 
     rate_key = "with_video_input" if has_video_input else "without_video_input"
     unit_rate = rates[rate_key]
+    if isinstance(unit_rate, dict):
+        normalized_resolution = str(resolution or task_info.get("resolution") or "").strip().lower()
+        unit_rate = unit_rate.get(normalized_resolution)
+        if unit_rate is None:
+            return None
     return {
         "total_tokens": total_tokens,
         "unit_rate_cny_per_million": unit_rate,

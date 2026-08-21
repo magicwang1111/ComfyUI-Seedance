@@ -14,6 +14,7 @@ It exposes fourteen nodes under the `ComfyUI-Seedance` category:
 - `ComfyUI-Seedance Trusted Person Asset`
 - `ComfyUI-Seedance Upload Image Asset`
 - `ComfyUI-Seedance Multimodal-to-Video`
+- `ComfyUI-Seedance 2.5 Omni-to-Video`
 - `ComfyUI-Seedance Preview Video`
 - `ComfyUI-Seedance Voice Clone V3 Train`
 - `ComfyUI-Seedance Voice Clone V3 Query`
@@ -508,6 +509,28 @@ Inputs:
 - Optional `audio_1` through `audio_3` as ComfyUI `AUDIO`
 - Optional `audio_asset_uri_1` through `audio_asset_uri_3`
 
+### Seedance 2.5 Omni-to-Video
+
+Ark-only node fixed to `doubao-seedance-2-5-260628` and `output_format=mp4`. It supports only Seedance 2.5 omni-reference generation; use the existing dedicated nodes for text, first-frame, and first/last-frame generation.
+
+Inputs:
+
+- `model` (fixed Seedance 2.5 model list)
+- `omni_reference_task_type`: `auto`, `reference`, `edit`, or `extend`
+- `prompt` (optional)
+- `resolution`: `480p`, `720p`, or `1080p`
+- `duration`: `-1` or 4 through 30 seconds
+- `ratio`
+- `generate_audio`: `开启` by default or `关闭`
+- `watermark`: disabled by default
+- Dynamic `image_01` through `image_30` inputs
+- Dynamic `video_01` through `video_10` inputs
+- Dynamic `audio_01` through `audio_10` inputs
+
+Each media type keeps one empty trailing socket and adds another after it is connected. Disconnecting a socket compacts that media type. Audio-only reference generation is supported. `edit` requires a video, `ratio=adaptive`, and `duration=-1`; `extend` requires a video and `ratio=adaptive`.
+
+The completed task's actual token usage is used for the cost estimate. Seedance 2.5 rates vary by resolution and whether the request contains a video input: 480p/720p use 70 CNY per million tokens without video or 42 with video; 1080p uses 77 without video or 46 with video.
+
 ### Shared Outputs
 
 All generation nodes output:
@@ -557,6 +580,7 @@ Starter workflow JSON files live in [examples/](./examples):
 - [07_comfyui_seedance_asset_uri_multimodal_workflow.json](./examples/07_comfyui_seedance_asset_uri_multimodal_workflow.json)
 - [08_comfyui_seedance_voice_clone_train_query_workflow.json](./examples/08_comfyui_seedance_voice_clone_train_query_workflow.json)
 - [09_comfyui_seedance_voice_clone_tts_workflow.json](./examples/09_comfyui_seedance_voice_clone_tts_workflow.json)
+- [10_comfyui_seedance_25_omni_workflow.json](./examples/10_comfyui_seedance_25_omni_workflow.json)
 
 See [examples/README.md](./examples/README.md) for a quick description of each one.
 

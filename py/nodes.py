@@ -37,6 +37,10 @@ from .api import (
     NODE_DURATION_OPTIONS,
     RATIO_OPTIONS,
     RESOLUTION_OPTIONS,
+    SEEDANCE_25_DURATION_OPTIONS,
+    SEEDANCE_25_MODEL,
+    SEEDANCE_25_RESOLUTION_OPTIONS,
+    SEEDANCE_25_TASK_TYPE_OPTIONS,
     VideoAPIError,
     SpeechAPIError,
     SpeechClient,
@@ -46,6 +50,7 @@ from .api import (
     build_asset_image_reference_payload,
     build_first_frame_payload,
     build_generation_payload,
+    build_seedance_25_omni_payload,
     build_image_reference_payload,
     build_last_frame_payload,
     build_video_reference_payload,
@@ -109,6 +114,30 @@ DEFAULT_ASSET_MODEL_PROMPT = (
     "服装款式、颜色、材质严格参考图片2。生成电商模特展示视频，人物自然站立/转身展示服装，"
     "背景简洁，画面干净。"
 )
+SEEDANCE_25_TOGGLE_OPTIONS = ["开启", "关闭"]
+SEEDANCE_25_DYNAMIC_INPUT_PATTERN = re.compile(r"^(image|video|audio)_(\d{2})$")
+SEEDANCE_25_DYNAMIC_INPUT_LIMITS = {"image": 30, "video": 10, "audio": 10}
+
+
+class Seedance25DynamicInputs(dict):
+    def __contains__(self, key):
+        return self._input_type(key) is not None
+
+    def __getitem__(self, key):
+        input_type = self._input_type(key)
+        if input_type is None:
+            raise KeyError(key)
+        return (input_type,)
+
+    @staticmethod
+    def _input_type(key):
+        match = SEEDANCE_25_DYNAMIC_INPUT_PATTERN.fullmatch(str(key))
+        if not match:
+            return None
+        media_type, raw_index = match.groups()
+        if not 1 <= int(raw_index) <= SEEDANCE_25_DYNAMIC_INPUT_LIMITS[media_type]:
+            return None
+        return {"image": "IMAGE", "video": "VIDEO", "audio": "AUDIO"}[media_type]
 
 
 def _load_json_config():
@@ -602,7 +631,7 @@ def _payload_has_video_input(payload):
     )
 
 
-def _build_cost_summary(model_name, task_info, has_video_input, provider):
+def _build_cost_summary(model_name, task_info, has_video_input, provider, resolution=None):
     total_tokens = extract_video_usage_tokens(task_info)
     if total_tokens is None:
         return "Token 用量：API 未返回｜预估费用：不可用"
@@ -611,7 +640,7 @@ def _build_cost_summary(model_name, task_info, has_video_input, provider):
     if provider != "ark":
         return f"Token 用量：{token_text}｜预估费用：不可用（当前 {provider.upper()} 模式未配置单价）"
 
-    estimate = estimate_ark_video_cost(model_name, task_info, has_video_input)
+    estimate = estimate_ark_video_cost(model_name, task_info, has_video_input, resolution=resolution)
     if estimate is None:
         return f"Token 用量：{token_text}｜预估费用：不可用（未知模型单价）"
 
@@ -693,7 +722,13 @@ def _build_generation_result(
             provider=provider,
         )
         task_id, task_info = _submit_and_wait(client, model, payload, provider)
-        cost_summary = _build_cost_summary(model, task_info, _payload_has_video_input(payload), provider)
+        cost_summary = _build_cost_summary(
+            model,
+            task_info,
+            _payload_has_video_input(payload),
+            provider,
+            resolution=payload.get("resolution"),
+        )
         print(f"[{NODE_PREFIX}] succeeded {model} task_id={task_id} | {cost_summary}")
         return _build_video_result(client, task_id, task_info, cost_summary)
 
@@ -726,6 +761,22 @@ def _multimodal_optional_inputs():
         inputs[f"audio_asset_uri_{index}"] = ("STRING", {"default": ""})
 
     return inputs
+
+
+def _seedance_25_omni_inputs():
+    return {
+        "required": {
+            "model": ([SEEDANCE_25_MODEL], {"default": SEEDANCE_25_MODEL}),
+            "omni_reference_task_type": (SEEDANCE_25_TASK_TYPE_OPTIONS, {"default": "auto"}),
+            "prompt": ("STRING", {"multiline": True, "default": ""}),
+            "resolution": (SEEDANCE_25_RESOLUTION_OPTIONS, {"default": "720p"}),
+            "duration": (SEEDANCE_25_DURATION_OPTIONS, {"default": "-1"}),
+            "ratio": (RATIO_OPTIONS, {"default": "adaptive"}),
+            "generate_audio": (SEEDANCE_25_TOGGLE_OPTIONS, {"default": "开启"}),
+            "watermark": ("BOOLEAN", {"default": False}),
+        },
+        "optional": Seedance25DynamicInputs(),
+    }
 
 
 def _first_frame_inputs():
@@ -1423,6 +1474,42 @@ def _collect_reference_content(images, image_asset_uris, videos, video_asset_uri
     return content
 
 
+def _collect_seedance_25_reference_content(dynamic_inputs):
+    grouped = {"image": [], "video": [], "audio": []}
+    for name, value in dynamic_inputs.items():
+        match = SEEDANCE_25_DYNAMIC_INPUT_PATTERN.fullmatch(str(name))
+        if match is None or value is None:
+            continue
+        media_type, raw_index = match.groups()
+        index = int(raw_index)
+        limit = SEEDANCE_25_DYNAMIC_INPUT_LIMITS[media_type]
+        if index > limit:
+            raise ValueError(f"Seedance 2.5 Omni supports at most {limit} {media_type} references.")
+        grouped[media_type].append((index, value))
+
+    content = []
+    builders = {
+        "image": (_upload_image_reference, build_image_reference_payload),
+        "video": (_upload_video_reference, build_video_reference_payload),
+        "audio": (_upload_audio_reference, build_audio_reference_payload),
+    }
+    for media_type in ("image", "video", "audio"):
+        upload, build = builders[media_type]
+        for _index, value in sorted(grouped[media_type], key=lambda item: item[0]):
+            content.append(build(upload(value)))
+
+    if not content:
+        raise ValueError("Seedance 2.5 Omni requires at least one image, video, or audio reference.")
+    return content
+
+
+def _seedance_25_toggle_enabled(value, field_name):
+    normalized = str(value).strip()
+    if normalized not in {"开启", "关闭"}:
+        raise ValueError(f"{field_name} must be 开启 or 关闭.")
+    return normalized == "开启"
+
+
 class SeedanceTextNode:
     RETURN_TYPES = ("STRING", "STRING", "STRING")
     RETURN_NAMES = ("url", "video_id", "file_path")
@@ -1774,6 +1861,60 @@ class SeedanceMultimodalNode:
             content=content,
             prompt_required=False,
         )
+
+
+class Seedance25OmniNode:
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("url", "video_id", "file_path")
+    FUNCTION = "generate"
+    OUTPUT_NODE = True
+    CATEGORY = NODE_CATEGORY
+    DESCRIPTION = "Seedance 2.5 omni-reference generation with dynamic image, video, and audio inputs."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return _seedance_25_omni_inputs()
+
+    def generate(
+        self,
+        model,
+        omni_reference_task_type,
+        prompt,
+        resolution,
+        duration,
+        ratio,
+        generate_audio,
+        watermark,
+        **dynamic_inputs,
+    ):
+        config_data = _load_json_config()
+        provider = _resolve_api_provider(config_data)
+        if provider != "ark":
+            raise ValueError("Seedance 2.5 Omni is only supported when api_provider='ark'.")
+
+        content = _collect_seedance_25_reference_content(dynamic_inputs)
+        payload = build_seedance_25_omni_payload(
+            model,
+            prompt,
+            omni_reference_task_type,
+            resolution,
+            duration,
+            ratio,
+            _seedance_25_toggle_enabled(generate_audio, "generate_audio"),
+            bool(watermark),
+            content,
+        )
+        with _runtime_client() as client:
+            task_id, task_info = _submit_and_wait(client, model, payload, provider)
+            cost_summary = _build_cost_summary(
+                model,
+                task_info,
+                _payload_has_video_input(payload),
+                provider,
+                resolution=payload["resolution"],
+            )
+            print(f"[{NODE_PREFIX}] succeeded {model} task_id={task_id} | {cost_summary}")
+            return _build_video_result(client, task_id, task_info, cost_summary)
 
 
 class SeedanceTrustedPersonAssetNode:

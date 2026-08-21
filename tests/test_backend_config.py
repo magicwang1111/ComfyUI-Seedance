@@ -211,7 +211,7 @@ class BackendConfigTests(unittest.TestCase):
             client.close()
 
     def test_node_mapping_contains_all_generation_and_preview_nodes(self):
-        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 14)
+        self.assertEqual(len(seedance_package.NODE_CLASS_MAPPINGS), 15)
         self.assertIn("ComfyUI-Seedance Text-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance First-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance First-Last-Frame-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
@@ -222,6 +222,7 @@ class BackendConfigTests(unittest.TestCase):
         self.assertIn("ComfyUI-Seedance Trusted Person Asset", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Upload Image Asset", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Multimodal-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
+        self.assertIn("ComfyUI-Seedance 2.5 Omni-to-Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Preview Video", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Voice Clone V3 Train", seedance_package.NODE_CLASS_MAPPINGS)
         self.assertIn("ComfyUI-Seedance Voice Clone V3 Query", seedance_package.NODE_CLASS_MAPPINGS)
@@ -820,6 +821,54 @@ class BackendConfigTests(unittest.TestCase):
             ["reference_image", "reference_video", "reference_audio"],
         )
 
+    def test_seedance_25_omni_payload_supports_audio_only_and_forces_mp4(self):
+        payload = video_api.build_seedance_25_omni_payload(
+            "doubao-seedance-2-5-260628",
+            "Follow the rhythm.",
+            "reference",
+            "1080p",
+            "30",
+            "16:9",
+            False,
+            False,
+            [video_api.build_audio_reference_payload("https://example.com/ref.mp3")],
+        )
+        self.assertEqual(payload["model"], "doubao-seedance-2-5-260628")
+        self.assertEqual(payload["omni_reference_task_type"], "reference")
+        self.assertEqual(payload["duration"], 30)
+        self.assertEqual(payload["generate_audio"], False)
+        self.assertEqual(payload["watermark"], False)
+        self.assertEqual(payload["output_format"], "mp4")
+        self.assertEqual([item["type"] for item in payload["content"]], ["text", "audio_url"])
+
+    def test_seedance_25_omni_edit_requires_video_adaptive_ratio_and_auto_duration(self):
+        image_content = [video_api.build_image_reference_payload("https://example.com/ref.jpg")]
+        video_content = [video_api.build_video_reference_payload("https://example.com/ref.mp4")]
+
+        with self.assertRaisesRegex(ValueError, "requires at least one video reference"):
+            video_api.build_seedance_25_omni_payload(
+                "doubao-seedance-2-5-260628", "Edit it.", "edit", "720p", "-1", "adaptive", True, False, image_content
+            )
+        with self.assertRaisesRegex(ValueError, "requires ratio=adaptive"):
+            video_api.build_seedance_25_omni_payload(
+                "doubao-seedance-2-5-260628", "Edit it.", "edit", "720p", "-1", "16:9", True, False, video_content
+            )
+        with self.assertRaisesRegex(ValueError, "requires duration=-1"):
+            video_api.build_seedance_25_omni_payload(
+                "doubao-seedance-2-5-260628", "Edit it.", "edit", "720p", "5", "adaptive", True, False, video_content
+            )
+
+    def test_seedance_25_omni_rejects_4k_and_too_many_images(self):
+        images = [video_api.build_image_reference_payload(f"https://example.com/{index}.jpg") for index in range(31)]
+        with self.assertRaisesRegex(ValueError, "resolution must be one of"):
+            video_api.build_seedance_25_omni_payload(
+                "doubao-seedance-2-5-260628", "Reference.", "reference", "4k", "5", "adaptive", True, False, images[:1]
+            )
+        with self.assertRaisesRegex(ValueError, "at most 30 image_url"):
+            video_api.build_seedance_25_omni_payload(
+                "doubao-seedance-2-5-260628", "Reference.", "reference", "720p", "5", "adaptive", True, False, images
+            )
+
     def test_standard_model_allows_native_high_resolutions(self):
         for resolution in ["1080p", "4k"]:
             payload = video_api.build_generation_payload(
@@ -957,6 +1006,27 @@ class BackendConfigTests(unittest.TestCase):
             with self.subTest(model=model, has_video_input=has_video_input):
                 estimate = video_api.estimate_ark_video_cost(model, task_info, has_video_input)
                 self.assertEqual(estimate["total_tokens"], 100000)
+                self.assertEqual(estimate["unit_rate_cny_per_million"], expected_rate)
+                self.assertAlmostEqual(estimate["estimated_cost_cny"], expected_cost)
+
+    def test_seedance_25_cost_uses_resolution_and_video_input_rates(self):
+        task_info = {"usage": {"total_tokens": 100000}}
+        cases = [
+            ("480p", False, 70.0, 7.0),
+            ("720p", False, 70.0, 7.0),
+            ("1080p", False, 77.0, 7.7),
+            ("480p", True, 42.0, 4.2),
+            ("720p", True, 42.0, 4.2),
+            ("1080p", True, 46.0, 4.6),
+        ]
+        for resolution, has_video_input, expected_rate, expected_cost in cases:
+            with self.subTest(resolution=resolution, has_video_input=has_video_input):
+                estimate = video_api.estimate_ark_video_cost(
+                    "doubao-seedance-2-5-260628",
+                    task_info,
+                    has_video_input,
+                    resolution=resolution,
+                )
                 self.assertEqual(estimate["unit_rate_cny_per_million"], expected_rate)
                 self.assertAlmostEqual(estimate["estimated_cost_cny"], expected_cost)
 
@@ -1598,6 +1668,99 @@ class BackendConfigTests(unittest.TestCase):
                     False,
                     image_1=object(),
                 )
+
+    def test_seedance_25_dynamic_input_types_and_limits(self):
+        input_types = seedance_nodes.Seedance25OmniNode.INPUT_TYPES()
+        required = input_types["required"]
+        optional = input_types["optional"]
+        self.assertEqual(required["generate_audio"], (["开启", "关闭"], {"default": "开启"}))
+        self.assertEqual(required["watermark"], ("BOOLEAN", {"default": False}))
+        self.assertEqual(optional["image_01"], ("IMAGE",))
+        self.assertEqual(optional["image_30"], ("IMAGE",))
+        self.assertEqual(optional["video_10"], ("VIDEO",))
+        self.assertEqual(optional["audio_10"], ("AUDIO",))
+        self.assertNotIn("image_00", optional)
+        self.assertNotIn("image_31", optional)
+        self.assertNotIn("video_11", optional)
+        self.assertNotIn("audio_11", optional)
+
+    def test_seedance_25_node_builds_dynamic_mixed_references(self):
+        fake_client = FakeVideoClient(
+            [
+                {"id": "video-25"},
+                {
+                    "id": "video-25",
+                    "status": "succeeded",
+                    "content": {"video_url": "https://example.com/result.mp4"},
+                    "usage": {"total_tokens": 100000},
+                },
+            ]
+        )
+
+        @contextmanager
+        def fake_runtime_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
+            with mock.patch.object(seedance_nodes, "_upload_image_reference", return_value="https://example.com/ref.jpg"):
+                with mock.patch.object(seedance_nodes, "_upload_video_reference", return_value="https://example.com/ref.mp4"):
+                    with mock.patch.object(seedance_nodes, "_upload_audio_reference", return_value="https://example.com/ref.mp3"):
+                        with mock.patch("builtins.print"):
+                            result = seedance_nodes.Seedance25OmniNode().generate(
+                                "doubao-seedance-2-5-260628",
+                                "auto",
+                                "Create a new commercial.",
+                                "1080p",
+                                "-1",
+                                "adaptive",
+                                "关闭",
+                                False,
+                                image_01=object(),
+                                video_01=FakeVideoReference(),
+                                audio_01={"waveform": "fake-waveform", "sample_rate": 44100},
+                            )
+
+        request_payload = fake_client.calls[0][2]["json"]
+        self.assertEqual(request_payload["output_format"], "mp4")
+        self.assertEqual(request_payload["generate_audio"], False)
+        self.assertEqual(request_payload["watermark"], False)
+        self.assertEqual(
+            [item["role"] for item in request_payload["content"][1:]],
+            ["reference_image", "reference_video", "reference_audio"],
+        )
+        self.assertEqual(
+            result["ui"]["seedance_cost"],
+            ["Token 用量：100,000 tokens｜预估费用：¥4.6000（46 元/百万 tokens，包含视频输入）"],
+        )
+
+    def test_seedance_25_node_accepts_audio_only(self):
+        fake_client = FakeVideoClient(
+            [
+                {"id": "video-25"},
+                {"id": "video-25", "status": "succeeded", "content": {"video_url": "https://example.com/result.mp4"}},
+            ]
+        )
+
+        @contextmanager
+        def fake_runtime_client():
+            yield fake_client
+
+        with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
+            with mock.patch.object(seedance_nodes, "_upload_audio_reference", return_value="https://example.com/ref.mp3"):
+                seedance_nodes.Seedance25OmniNode().generate(
+                    "doubao-seedance-2-5-260628",
+                    "reference",
+                    "Follow the reference audio.",
+                    "720p",
+                    "5",
+                    "16:9",
+                    "开启",
+                    False,
+                    audio_01={"waveform": "fake-waveform", "sample_rate": 44100},
+                )
+
+        request_payload = fake_client.calls[0][2]["json"]
+        self.assertEqual([item["type"] for item in request_payload["content"]], ["text", "audio_url"])
 
     def test_preview_video_returns_remote_url_when_save_disabled(self):
         result = seedance_nodes.PreviewVideoNode().run(
