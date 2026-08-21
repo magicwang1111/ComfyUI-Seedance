@@ -115,8 +115,9 @@ DEFAULT_ASSET_MODEL_PROMPT = (
     "背景简洁，画面干净。"
 )
 SEEDANCE_25_TOGGLE_OPTIONS = ["开启", "关闭"]
-SEEDANCE_25_DYNAMIC_INPUT_PATTERN = re.compile(r"^(image|video|audio)_(\d{2})$")
-SEEDANCE_25_DYNAMIC_INPUT_LIMITS = {"image": 30, "video": 10, "audio": 10}
+SEEDANCE_25_DYNAMIC_INPUT_PATTERN = re.compile(r"^(image|video|audio|asset)_(\d{2})$")
+SEEDANCE_25_DYNAMIC_INPUT_LIMITS = {"image": 30, "video": 10, "audio": 10, "asset": 50}
+SEEDANCE_ASSET_URI_PATTERN = re.compile(r"^asset://(asset-.+)$", re.IGNORECASE)
 
 
 class Seedance25DynamicInputs(dict):
@@ -137,7 +138,7 @@ class Seedance25DynamicInputs(dict):
         media_type, raw_index = match.groups()
         if not 1 <= int(raw_index) <= SEEDANCE_25_DYNAMIC_INPUT_LIMITS[media_type]:
             return None
-        return {"image": "IMAGE", "video": "VIDEO", "audio": "AUDIO"}[media_type]
+        return {"image": "IMAGE", "video": "VIDEO", "audio": "AUDIO", "asset": "STRING"}[media_type]
 
 
 def _load_json_config():
@@ -1475,7 +1476,7 @@ def _collect_reference_content(images, image_asset_uris, videos, video_asset_uri
 
 
 def _collect_seedance_25_reference_content(dynamic_inputs):
-    grouped = {"image": [], "video": [], "audio": []}
+    grouped = {"image": [], "video": [], "audio": [], "asset": []}
     for name, value in dynamic_inputs.items():
         match = SEEDANCE_25_DYNAMIC_INPUT_PATTERN.fullmatch(str(name))
         if match is None or value is None:
@@ -1497,6 +1498,32 @@ def _collect_seedance_25_reference_content(dynamic_inputs):
         upload, build = builders[media_type]
         for _index, value in sorted(grouped[media_type], key=lambda item: item[0]):
             content.append(build(upload(value)))
+
+    asset_inputs = sorted(grouped["asset"], key=lambda item: item[0])
+    if asset_inputs:
+        project_name = _create_asset_project_name()
+        with _asset_client() as client:
+            for _index, asset_uri in asset_inputs:
+                normalized_uri = str(asset_uri or "").strip()
+                match = SEEDANCE_ASSET_URI_PATTERN.fullmatch(normalized_uri)
+                if match is None:
+                    raise ValueError("Seedance 2.5 Omni asset inputs must use asset://asset-... format.")
+                try:
+                    asset_info = client.get_asset(match.group(1), project_name=project_name)
+                except AssetAPIError as exc:
+                    _raise_with_asset_api_guidance(exc)
+                asset_type = str(asset_info.get("AssetType") or "").strip().lower()
+                builder = {
+                    "image": build_image_reference_payload,
+                    "video": build_video_reference_payload,
+                    "audio": build_audio_reference_payload,
+                }.get(asset_type)
+                if builder is None:
+                    raise ValueError(
+                        f"Seedance 2.5 Omni asset {normalized_uri} has unsupported AssetType: "
+                        f"{asset_info.get('AssetType') or 'missing'}."
+                    )
+                content.append(builder(normalized_uri))
 
     if not content:
         raise ValueError("Seedance 2.5 Omni requires at least one image, video, or audio reference.")

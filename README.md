@@ -526,8 +526,9 @@ Inputs:
 - Dynamic `image_01` through `image_30` inputs
 - Dynamic `video_01` through `video_10` inputs
 - Dynamic `audio_01` through `audio_10` inputs
+- Dynamic `asset_01` through `asset_50` inputs for `asset://asset-...` strings
 
-Each media type keeps one empty trailing socket and adds another after it is connected. Disconnecting a socket compacts that media type. Audio-only reference generation is supported. `edit` requires a video, `ratio=adaptive`, and `duration=-1`; `extend` requires a video and `ratio=adaptive`.
+Each input type keeps one empty trailing socket and adds another after it is connected. Disconnecting a socket compacts that type. Asset inputs query Ark `GetAsset` and use the returned `AssetType` to map the URI to `reference_image`, `reference_video`, or `reference_audio`; the URI itself is never guessed to be an image or video. Local and asset references share the same final 30-image, 10-video, and 10-audio limits. Audio-only reference generation is supported. `edit` requires a video, `ratio=adaptive`, and `duration=-1`; `extend` requires a video and `ratio=adaptive`.
 
 The completed task's actual token usage is used for the cost estimate. Seedance 2.5 rates vary by resolution and whether the request contains a video input: 480p/720p use 70 CNY per million tokens without video or 42 with video; 1080p uses 77 without video or 46 with video.
 
@@ -581,6 +582,7 @@ Starter workflow JSON files live in [examples/](./examples):
 - [08_comfyui_seedance_voice_clone_train_query_workflow.json](./examples/08_comfyui_seedance_voice_clone_train_query_workflow.json)
 - [09_comfyui_seedance_voice_clone_tts_workflow.json](./examples/09_comfyui_seedance_voice_clone_tts_workflow.json)
 - [10_comfyui_seedance_25_omni_workflow.json](./examples/10_comfyui_seedance_25_omni_workflow.json)
+- [11_comfyui_seedance_25_asset_omni_workflow.json](./examples/11_comfyui_seedance_25_asset_omni_workflow.json)
 
 See [examples/README.md](./examples/README.md) for a quick description of each one.
 

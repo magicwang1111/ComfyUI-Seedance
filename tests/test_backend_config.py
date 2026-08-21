@@ -1679,10 +1679,13 @@ class BackendConfigTests(unittest.TestCase):
         self.assertEqual(optional["image_30"], ("IMAGE",))
         self.assertEqual(optional["video_10"], ("VIDEO",))
         self.assertEqual(optional["audio_10"], ("AUDIO",))
+        self.assertEqual(optional["asset_01"], ("STRING",))
+        self.assertEqual(optional["asset_50"], ("STRING",))
         self.assertNotIn("image_00", optional)
         self.assertNotIn("image_31", optional)
         self.assertNotIn("video_11", optional)
         self.assertNotIn("audio_11", optional)
+        self.assertNotIn("asset_51", optional)
 
     def test_seedance_25_node_builds_dynamic_mixed_references(self):
         fake_client = FakeVideoClient(
@@ -1761,6 +1764,85 @@ class BackendConfigTests(unittest.TestCase):
 
         request_payload = fake_client.calls[0][2]["json"]
         self.assertEqual([item["type"] for item in request_payload["content"]], ["text", "audio_url"])
+
+    def test_seedance_25_node_resolves_dynamic_asset_types(self):
+        fake_video_client = FakeVideoClient(
+            [
+                {"id": "video-25"},
+                {
+                    "id": "video-25",
+                    "status": "succeeded",
+                    "content": {"video_url": "https://example.com/result.mp4"},
+                    "usage": {"total_tokens": 100000},
+                },
+            ]
+        )
+        fake_asset_client = FakeAssetClient("ak", "sk")
+        fake_asset_client.get_asset = mock.Mock(
+            side_effect=[
+                {"Id": "asset-image-1", "AssetType": "Image", "Status": "Active"},
+                {"Id": "asset-video-1", "AssetType": "Video", "Status": "Active"},
+            ]
+        )
+
+        @contextmanager
+        def fake_runtime_client():
+            yield fake_video_client
+
+        @contextmanager
+        def fake_asset_client_context():
+            yield fake_asset_client
+
+        with mock.patch.object(seedance_nodes, "_runtime_client", fake_runtime_client):
+            with mock.patch.object(seedance_nodes, "_asset_client", fake_asset_client_context):
+                with mock.patch("builtins.print"):
+                    result = seedance_nodes.Seedance25OmniNode().generate(
+                        "doubao-seedance-2-5-260628",
+                        "auto",
+                        "Use both assets.",
+                        "720p",
+                        "-1",
+                        "adaptive",
+                        "开启",
+                        False,
+                        asset_01="asset://asset-image-1",
+                        asset_02="asset://asset-video-1",
+                    )
+
+        request_payload = fake_video_client.calls[0][2]["json"]
+        self.assertEqual(
+            [item["role"] for item in request_payload["content"][1:]],
+            ["reference_image", "reference_video"],
+        )
+        self.assertEqual(
+            [item[item["type"]]["url"] for item in request_payload["content"][1:]],
+            ["asset://asset-image-1", "asset://asset-video-1"],
+        )
+        self.assertEqual(
+            [call.args for call in fake_asset_client.get_asset.call_args_list],
+            [("asset-image-1",), ("asset-video-1",)],
+        )
+        self.assertEqual(
+            result["ui"]["seedance_cost"],
+            ["Token 用量：100,000 tokens｜预估费用：¥4.2000（42 元/百万 tokens，包含视频输入）"],
+        )
+
+    def test_seedance_25_node_rejects_invalid_or_unknown_asset_inputs(self):
+        with self.assertRaisesRegex(ValueError, "asset://asset-... format"):
+            seedance_nodes._collect_seedance_25_reference_content({"asset_01": "https://example.com/ref.jpg"})
+
+        fake_asset_client = FakeAssetClient("ak", "sk")
+        fake_asset_client.get_asset = mock.Mock(return_value={"AssetType": "Document"})
+
+        @contextmanager
+        def fake_asset_client_context():
+            yield fake_asset_client
+
+        with mock.patch.object(seedance_nodes, "_asset_client", fake_asset_client_context):
+            with self.assertRaisesRegex(ValueError, "unsupported AssetType: Document"):
+                seedance_nodes._collect_seedance_25_reference_content(
+                    {"asset_01": "asset://asset-document-1"}
+                )
 
     def test_preview_video_returns_remote_url_when_save_disabled(self):
         result = seedance_nodes.PreviewVideoNode().run(

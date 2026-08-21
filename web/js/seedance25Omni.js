@@ -5,6 +5,7 @@ const MEDIA_INPUTS = {
     image: { type: "IMAGE", limit: 30 },
     video: { type: "VIDEO", limit: 10 },
     audio: { type: "AUDIO", limit: 10 },
+    asset: { type: "STRING", limit: 50 },
 };
 
 function dynamicInputName(mediaType, index) {

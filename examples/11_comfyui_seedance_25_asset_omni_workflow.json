@@ -1,0 +1,112 @@
+{
+  "last_node_id": 5,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "ComfyUI-Seedance Create Asset Group",
+      "pos": [80, 100],
+      "size": {"0": 380, "1": 180},
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {"name": "group_id", "type": "STRING", "links": [2]},
+        {"name": "project_name", "type": "STRING", "links": null},
+        {"name": "group_type", "type": "STRING", "links": null},
+        {"name": "name", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "ComfyUI-Seedance Create Asset Group"},
+      "widgets_values": ["seedance_25_omni_assets", "Seedance 2.5 Omni reference assets", "default", "AIGC"]
+    },
+    {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [80, 360],
+      "size": {"0": 320, "1": 320},
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {"name": "IMAGE", "type": "IMAGE", "links": [1]},
+        {"name": "MASK", "type": "MASK", "links": null}
+      ],
+      "properties": {"Node name for S&R": "LoadImage"},
+      "widgets_values": ["example.png", "image"]
+    },
+    {
+      "id": 3,
+      "type": "ComfyUI-Seedance Upload Asset",
+      "pos": [520, 220],
+      "size": {"0": 430, "1": 300},
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {"name": "group_id", "type": "STRING", "link": 2},
+        {"name": "image", "type": "IMAGE", "link": 1}
+      ],
+      "outputs": [
+        {"name": "asset_uri", "type": "STRING", "links": [3]},
+        {"name": "group_id", "type": "STRING", "links": null},
+        {"name": "asset_id", "type": "STRING", "links": null},
+        {"name": "asset_type", "type": "STRING", "links": null},
+        {"name": "status", "type": "STRING", "links": null},
+        {"name": "asset_url", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "ComfyUI-Seedance Upload Asset"},
+      "widgets_values": ["Image", "", "default", "omni-reference", true]
+    },
+    {
+      "id": 4,
+      "type": "ComfyUI-Seedance 2.5 Omni-to-Video",
+      "pos": [1040, 180],
+      "size": {"0": 500, "1": 430},
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [{"name": "asset_01", "type": "STRING", "link": 3}],
+      "outputs": [
+        {"name": "url", "type": "STRING", "links": [4]},
+        {"name": "video_id", "type": "STRING", "links": null},
+        {"name": "file_path", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "ComfyUI-Seedance 2.5 Omni-to-Video"},
+      "widgets_values": [
+        "doubao-seedance-2-5-260628",
+        "reference",
+        "Use the uploaded Ark asset as the primary reference and generate a coherent commercial video.",
+        "720p",
+        "-1",
+        "adaptive",
+        "开启",
+        false
+      ]
+    },
+    {
+      "id": 5,
+      "type": "ComfyUI-Seedance Preview Video",
+      "pos": [1600, 260],
+      "size": {"0": 330, "1": 180},
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [{"name": "video_url", "type": "STRING", "link": 4}],
+      "outputs": [{"name": "file_path", "type": "STRING", "links": null}],
+      "properties": {"Node name for S&R": "ComfyUI-Seedance Preview Video"},
+      "widgets_values": ["ComfyUI-Seedance", true]
+    }
+  ],
+  "links": [
+    [1, 2, 0, 3, 1, "IMAGE"],
+    [2, 1, 0, 3, 0, "STRING"],
+    [3, 3, 0, 4, 0, "STRING"],
+    [4, 4, 0, 5, 0, "STRING"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {"ds": {"scale": 0.9, "offset": [0, 0]}},
+  "version": 0.4
+}
