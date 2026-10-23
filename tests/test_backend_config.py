@@ -170,6 +170,33 @@ class FakeVideoReference:
 
 
 class BackendConfigTests(unittest.TestCase):
+    def test_api_guidance_preserves_billing_and_permission_reasons(self):
+        for status, code, message in (
+            (403, "insufficient_balance", "Insufficient balance"),
+            (403, "account_overdue", "Forbidden"),
+            (403, "permission_denied", "Model access denied"),
+            (429, "insufficient_quota", "Quota exhausted"),
+        ):
+            with self.subTest(status=status, code=code):
+                error = client_module.VideoAPIError.from_response(httpx.Response(
+                    status, json={"error": {"code": code, "message": message}}
+                ))
+                with mock.patch.object(seedance_nodes, "_load_json_config", return_value={}):
+                    with self.assertRaises(ValueError) as caught:
+                        seedance_nodes._raise_with_api_guidance(error)
+                self.assertIn(code, str(caught.exception))
+                self.assertIn(message, str(caught.exception))
+
+    def test_asset_guidance_preserves_billing_reason(self):
+        for provider in ("ark", "las"):
+            for status in (403, 429):
+                with self.subTest(provider=provider, status=status):
+                    error = asset_api.AssetAPIError("Insufficient balance", status_code=status)
+                    with mock.patch.object(seedance_nodes, "_resolve_api_provider", return_value=provider):
+                        with mock.patch.object(seedance_nodes, "_load_json_config", return_value={}):
+                            with self.assertRaisesRegex(ValueError, "Insufficient balance"):
+                                seedance_nodes._raise_with_asset_api_guidance(error)
+
     def test_download_to_file_does_not_forward_ark_authorization(self):
         captured = {}
 

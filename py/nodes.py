@@ -562,12 +562,12 @@ def _raise_with_api_guidance(exc):
     if exc.status_code in {401, 403}:
         credential_name = "las_api_key" if provider == "las" else "api_key"
         raise ValueError(
-            f"The video API rejected the request with {exc.status_code}. "
+            f"{exc} "
             f"Check {credential_name}, base_url, billing, and model availability."
         ) from exc
 
     if exc.status_code == 429:
-        raise ValueError("Volcengine Ark rate limit exceeded (429). Wait and retry.") from exc
+        raise ValueError(f"{exc} Check billing/quota or request rate according to the API error above.") from exc
 
     raise ValueError(str(exc)) from exc
 
@@ -577,16 +577,16 @@ def _raise_with_asset_api_guidance(exc):
     if exc.status_code in {401, 403}:
         if provider == "las":
             raise ValueError(
-                f"The LAS asset API rejected the request with {exc.status_code}. "
+                f"{exc} "
                 "Check las_api_key, LAS asset permissions, and project_name."
             ) from exc
         raise ValueError(
-            f"The asset API rejected the request with {exc.status_code}. "
+            f"{exc} "
             "Check access_key_id, secret_access_key, ArkFullAccess permission, and project_name."
         ) from exc
 
     if exc.status_code == 429:
-        raise ValueError("Volcengine Ark asset API rate limit exceeded (429). Wait and retry.") from exc
+        raise ValueError(f"{exc} Check billing/quota or request rate according to the API error above.") from exc
 
     raise ValueError(str(exc)) from exc
 

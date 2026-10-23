@@ -33,6 +33,8 @@ class VideoAPIError(Exception):
             error_payload = payload.get("error")
             if isinstance(error_payload, dict):
                 message = error_payload.get("message") or json.dumps(error_payload, ensure_ascii=False)
+                if error_payload.get("code"):
+                    message = f"[{error_payload['code']}] {message}"
                 status = error_payload.get("type") or payload.get("status")
             elif error_payload:
                 message = str(error_payload)
